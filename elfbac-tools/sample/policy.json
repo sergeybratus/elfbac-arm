@@ -52,8 +52,8 @@
             "from": "start",
             "to": "libc",
             "trigger": "printf",
-            "param_size": 8,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         }
     ]
 }
