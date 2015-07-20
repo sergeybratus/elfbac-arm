@@ -1,7 +1,7 @@
 #! /bin/bash
 
-mkdir qemu
-pushd qemu
+mkdir ../qemu
+pushd ../qemu
 
 qemu-img create -f raw rootfs.img 8G
 parted rootfs.img --script mklabel msdos
@@ -26,7 +26,7 @@ sudo qemu-nbd -d /dev/nbd0
 
 echo "Booting into shell, once complete manually run '/debootstrap/debootstrap --second-stage' and shutdown"
 read -rsp $'Press any key to continue...\n' -n1 key
-qemu-system-arm -M vexpress-a9 -cpu cortex-a9 -m 1024M -kernel ../elfbac-arm/arch/arm/boot/zImage -dtb ../elfbac-arm/arch/arm/boot/dts/vexpress-v2p-ca9.dtb -sd rootfs.img -append "rootwait console=ttyAMA0 root=/dev/mmcblk0p1 init=/bin/sh rw" -nographic
+qemu-system-arm -M vexpress-a9 -cpu cortex-a9 -m 1024M -kernel ../linux/arch/arm/boot/zImage -dtb ../linux/arch/arm/boot/dts/vexpress-v2p-ca9.dtb -sd rootfs.img -append "rootwait console=ttyAMA0 root=/dev/mmcblk0p1 init=/bin/sh rw" -nographic
 
 popd
 

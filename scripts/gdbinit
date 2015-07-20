@@ -1,0 +1,2 @@
+file ../linux/vmlinux
+target remote localhost:1234

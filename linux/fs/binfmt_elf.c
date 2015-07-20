@@ -35,6 +35,7 @@
 #include <linux/utsname.h>
 #include <linux/coredump.h>
 #include <linux/sched.h>
+#include <linux/elfbac.h>
 #include <asm/uaccess.h>
 #include <asm/param.h>
 #include <asm/page.h>
@@ -664,7 +665,7 @@ static unsigned long randomize_stack_top(unsigned long stack_top)
 static int load_elf_binary(struct linux_binprm *bprm)
 {
 	struct file *interpreter = NULL; /* to shut gcc up */
- 	unsigned long load_addr = 0, load_bias = 0;
+	unsigned long load_addr = 0, load_bias = 0;
 	int load_addr_set = 0;
 	char * elf_interpreter = NULL;
 	unsigned long error;
@@ -688,7 +689,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 		retval = -ENOMEM;
 		goto out_ret;
 	}
-	
+
 	/* Get the exec-header */
 	loc->elf_ex = *((struct elfhdr *)bprm->buf);
 
@@ -724,7 +725,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			 * is an a.out format binary
 			 */
 			retval = -ENOEXEC;
-			if (elf_ppnt->p_filesz > PATH_MAX || 
+			if (elf_ppnt->p_filesz > PATH_MAX ||
 			    elf_ppnt->p_filesz < 2)
 				goto out_free_ph;
 
@@ -854,7 +855,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				 executable_stack);
 	if (retval < 0)
 		goto out_free_dentry;
-	
+
 	current->mm->start_stack = bprm->p;
 
 	/* Now we do a little grungy work by mmapping the ELF image into
@@ -870,7 +871,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 
 		if (unlikely (elf_brk > elf_bss)) {
 			unsigned long nbyte;
-	            
+
 			/* There was a PT_LOAD segment with p_memsz > p_filesz
 			   before this one. Map anonymous pages, if needed,
 			   and clear the area.  */
@@ -1079,6 +1080,44 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	 * function descriptor entries when executing dynamically links apps.
 	 */
 	ELF_PLAT_INIT(regs, reloc_func_desc);
+#endif
+
+#ifdef CONFIG_ELFBAC
+	elf_ppnt = elf_phdata;
+	for (i = 0; i < loc->elf_ex.e_phnum; i++, elf_ppnt++) {
+		if (elf_ppnt->p_type == PT_ELFBAC_POLICY) {
+			unsigned char *elfbac_policy_buffer;
+
+			retval = -ENOEXEC;
+			if (elf_ppnt->p_filesz > ELFBAC_POLICY_SIZE_MAX)
+				goto out;
+
+			retval = -ENOMEM;
+			elfbac_policy_buffer = kmalloc(elf_ppnt->p_filesz,
+					GFP_KERNEL);
+
+			if (!elfbac_policy_buffer)
+				goto out;
+
+			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
+					elfbac_policy_buffer,
+					elf_ppnt->p_filesz);
+
+			if (retval != elf_ppnt->p_filesz) {
+				if (retval > 0)
+					retval = -EIO;
+				kfree(elfbac_policy_buffer);
+				goto out;
+			}
+
+			retval = parse_elfbac_policy(elfbac_policy_buffer,
+					elf_ppnt->p_filesz);
+			kfree(elfbac_policy_buffer);
+
+			if (retval < 0)
+				goto out;
+		}
+	}
 #endif
 
 	start_thread(regs, elf_entry, bprm->p);
