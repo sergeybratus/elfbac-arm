@@ -1,0 +1,2 @@
+pyelftools==0.23
+pystache==0.5.4

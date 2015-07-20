@@ -1,0 +1,59 @@
+{
+    "states": [
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "description": "*crt*(.text*) *main.o(.text*)", "permissions": "rx" },
+                { "description": "*crt*(.rodata*) *main.o(.rodata*)", "permissions": "r" },
+                { "description": "*main.o(.data.parse_result)", "permissions": "rw" },
+                { "description": "*crt*(.data*) *main.o(.data*)", "permissions": "rw" },
+                { "description": "*crt*(.bss*) *crt*(COMMON) *main.o(.bss*) *main.o(COMMON)", "permissions": "rw" }
+            ]
+        },
+        {
+            "name": "parser",
+            "stack": "stack",
+            "sections": [
+                { "description": "*parser.o(.text*)", "permissions": "rx" },
+                { "description": "*parser.o(.rodata*)", "permissions": "r" },
+                { "description": "*parser.o(.data*)", "permissions": "rw" },
+                { "description": "*main.o(.data.parse_result)", "permissions": "rw" },
+                { "description": "*parser.o(.bss*) *parser.o(COMMON)", "permissions": "rw" }
+            ]
+        },
+        {
+            "name": "libc",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*libc.a:(.text*) *libgcc*:(.text*)", "permissions": "rx" },
+                { "description": "*libc.a:(.rodata*) *libgcc*:(.rodata*)", "permissions": "r" },
+                { "description": "*libc.a:(.data*) *libgcc*:(.data*)", "permissions": "rw" },
+                { "description": "*libc.a:(.bss*) *libgcc*:(.bss*) *libc.a:(COMMON) *libgcc*:(COMMON)", "permissions": "rw" }
+            ]
+        }
+    ],
+    "transitions": [
+        {
+            "from": "start",
+            "to": "parser",
+            "trigger": "do_parse",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "parser",
+            "to": "libc",
+            "trigger": "__isoc99_scanf",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "libc",
+            "trigger": "printf",
+            "param_size": 8,
+            "return_size": 4
+        }
+    ]
+}
