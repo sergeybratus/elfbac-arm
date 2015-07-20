@@ -54,7 +54,6 @@ def stable_unique(l):
 # TODO: 32 vs 64bit ELF, changes here are trivial but thought needs to go into
 # whats happening in the kernel
 def generate_binary_policy(policy, symbol_table, must_resolve=True):
-    MAGIC = 0x7fe7fbac
     STATE = 1
     SECTION = 2
     TRANSITION = 3
@@ -64,10 +63,6 @@ def generate_binary_policy(policy, symbol_table, must_resolve=True):
     transitions = policy['transitions']
     state_names = [s['name'] for s in states]
     stack_names = stable_unique([s['stack'] for s in states])
-
-    # Pack header
-    chunks.append(struct.pack('<IIII', MAGIC, len(states), len(transitions),
-        len(stack_names)))
 
     # Pack states
     for state in states:
