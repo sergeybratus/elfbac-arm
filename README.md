@@ -1,6 +1,6 @@
 # ELFbac ARM
 
-This repository is (currently) split into two components. The modified kernel
+This repository is (currently) split into three components. The modified kernel
 lives in linux/, and is a git subtree tracking the main linux repository on
 github.
 
@@ -14,3 +14,4 @@ run it in the VM or on the host with qemu-arm-static.
 Scripts to create a vexpress-a9 qemu vm have been placed in scripts/, along with
 a kernel config for that machine. Requires a debian-based (Ubuntu probably)
 machine with the arm-linux-gnueabihf toolchain and qemu installed.
+
