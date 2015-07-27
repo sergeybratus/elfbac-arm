@@ -376,7 +376,12 @@ struct mm_struct {
 						 * together off init_mm.mmlist, and are protected
 						 * by mmlist_lock
 						 */
-
+#ifdef CONFIG_ELFBAC
+	struct elfbac_policy *elfbac_policy;	/* ELFbac policy controlling
+						 * what actiont to take on page
+						 * faults
+						 */
+#endif
 
 	unsigned long hiwater_rss;	/* High-watermark of RSS usage */
 	unsigned long hiwater_vm;	/* High-water virtual memory usage */

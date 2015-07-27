@@ -1099,6 +1099,14 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if (!elfbac_policy_buffer)
 				goto out;
 
+			current->mm->elfbac_policy = kmalloc(
+					sizeof(struct elfbac_policy),
+					GFP_KERNEL);
+			if (!current->mm->elfbac_policy) {
+				kfree(elfbac_policy_buffer);
+				goto out;
+			}
+
 			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
 					elfbac_policy_buffer,
 					elf_ppnt->p_filesz);
@@ -1107,11 +1115,13 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				if (retval > 0)
 					retval = -EIO;
 				kfree(elfbac_policy_buffer);
+				kfree(current->mm->elfbac_policy);
 				goto out;
 			}
 
-			retval = parse_elfbac_policy(elfbac_policy_buffer,
-					elf_ppnt->p_filesz);
+			retval = elfbac_parse_policy(elfbac_policy_buffer,
+					elf_ppnt->p_filesz,
+					current->mm->elfbac_policy);
 			kfree(elfbac_policy_buffer);
 
 			if (retval < 0)

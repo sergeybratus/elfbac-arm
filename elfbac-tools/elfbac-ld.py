@@ -51,8 +51,6 @@ def stable_unique(l):
     seen = set()
     return [x for x in l if not (x in seen or seen.add(x))]
 
-# TODO: 32 vs 64bit ELF, changes here are trivial but thought needs to go into
-# whats happening in the kernel
 def generate_binary_policy(policy, symbol_table, must_resolve=True):
     STATE = 1
     SECTION = 2
@@ -83,9 +81,9 @@ def generate_binary_policy(policy, symbol_table, must_resolve=True):
             size = end_addr - start_addr
 
             permissions = 0
-            permissions |= (0x4 if 'r' in section['permissions'] else 0)
+            permissions |= (0x1 if 'r' in section['permissions'] else 0)
             permissions |= (0x2 if 'w' in section['permissions'] else 0)
-            permissions |= (0x1 if 'x' in section['permissions'] else 0)
+            permissions |= (0x4 if 'x' in section['permissions'] else 0)
 
             chunks.append(struct.pack('<IIII', SECTION, start_addr, size, permissions))
 
@@ -96,14 +94,14 @@ def generate_binary_policy(policy, symbol_table, must_resolve=True):
         param_size = int(transition['param_size'])
         return_size = int(transition['return_size'])
 
-        trigger_symbol = transition['trigger']
+        address_symbol = transition['address']
 
-        trigger_addr  = symbol_table.get(trigger_symbol, 0)
-        if must_resolve and trigger_addr == 0:
-            raise KeyError('Error resolving symbol %s' % trigger_symbol)
+        address = symbol_table.get(address_symbol, 0)
+        if must_resolve and address == 0:
+            raise KeyError('Error resolving symbol %s' % address_symbol)
 
         chunks.append(struct.pack('<IIIIII', TRANSITION, from_state, to_state,
-            trigger_addr, param_size, return_size))
+            address, param_size, return_size))
 
     return b''.join(chunks)
 
@@ -153,6 +151,7 @@ def main(argv=None):
         cmd = [args.linker] + args.linker_args + \
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
+        print link_map
         symbol_map = parse_link_map(link_map)
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
