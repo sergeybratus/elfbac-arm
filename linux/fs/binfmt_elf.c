@@ -1083,6 +1083,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 #endif
 
 #ifdef CONFIG_ELFBAC
+	current->mm->elfbac_policy = NULL;
 	elf_ppnt = elf_phdata;
 	for (i = 0; i < loc->elf_ex.e_phnum; i++, elf_ppnt++) {
 		if (elf_ppnt->p_type == PT_ELFBAC_POLICY) {

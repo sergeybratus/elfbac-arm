@@ -26,6 +26,12 @@
 #include <asm/system_info.h>
 #include <asm/tlbflush.h>
 
+#ifdef CONFIG_ELFBAC
+#include <linux/elfbac.h>
+#include <asm/pgalloc.h>
+#include <asm/mmu_context.h>
+#endif
+
 #include "fault.h"
 
 #ifdef CONFIG_MMU
@@ -242,6 +248,45 @@ good_area:
 		fault = VM_FAULT_BADACCESS;
 		goto out;
 	}
+
+#ifdef CONFIG_ELFBAC
+	if (mm->elfbac_policy) {
+		struct elfbac_state *next_state;
+
+		/* From access_error below */
+		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
+		if (fsr & FSR_WRITE)
+			mask = VM_WRITE;
+		if (fsr & FSR_LNX_PF)
+			mask = VM_EXEC;
+
+		fault = VM_FAULT_BADACCESS;
+
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state))
+			goto out;
+
+		if (next_state) {
+			printk("DOING A PGD SWAP!\n");
+			spin_lock(&mm->page_table_lock);
+
+			if (!next_state->pgd) {
+				next_state->pgd = pgd_alloc(mm);
+				if (!next_state->pgd)
+					goto out;
+
+				if (init_new_context(current, mm)) {
+					pgd_free(mm, next_state->pgd);
+					goto out;
+				}
+			}
+
+			check_and_switch_context(mm, current);
+			mm->elfbac_policy->current_state = next_state;
+
+			spin_unlock(&mm->page_table_lock);
+		}
+	}
+#endif
 
 	return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 

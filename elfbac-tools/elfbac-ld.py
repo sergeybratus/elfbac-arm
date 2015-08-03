@@ -26,14 +26,14 @@ def render_linker_script(policy, platform, policy_len):
     data = {
         'policy_len': policy_len,
         'text_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['permissions'] == 'rx'] } for state in states],
+            for section in state['sections'] if section['flags'] == 'rx'] } for state in states],
         'rodata_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['permissions'] == 'r'] } for state in states],
+            for section in state['sections'] if section['flags'] == 'r'] } for state in states],
         'data_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['permissions'] == 'rw' and \
+            for section in state['sections'] if section['flags'] == 'rw' and \
                     not is_bss(section['description'])] } for state in states],
         'bss_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['permissions'] == 'rw' and \
+            for section in state['sections'] if section['flags'] == 'rw' and \
                     is_bss(section['description'])] } for state in states],
     }
 
@@ -65,18 +65,18 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
         chunks.append(struct.pack('<II', STATE, stack_id))
 
         for section in state['sections']:
-            permissions = 0
-            permissions |= (0x1 if 'r' in section['permissions'] else 0)
-            permissions |= (0x2 if 'w' in section['permissions'] else 0)
-            permissions |= (0x4 if 'x' in section['permissions'] else 0)
+            flags = 0
+            flags |= (0x1 if 'r' in section['flags'] else 0)
+            flags |= (0x2 if 'w' in section['flags'] else 0)
+            flags |= (0x4 if 'x' in section['flags'] else 0)
 
-            section_name = [None, '.rodata.', None, '.data.', None, '.text.', None, None][permissions] + \
+            section_name = [None, '.rodata.', None, '.data.', None, '.text.', None, None][flags] + \
                     state['name']
-            if section['permissions'] == 'rw' and is_bss(section['description']):
+            if section['flags'] == 'rw' and is_bss(section['description']):
                 section_name = '.bss.' + state['name']
 
-            address, size = section_map.get(section_name, (0, 0))
-            chunks.append(struct.pack('<IIII', SECTION, address, size, permissions))
+            base, size = section_map.get(section_name, (0, 0))
+            chunks.append(struct.pack('<IIII', SECTION, base, size, flags))
 
     # Pack data transitions
     for transition in data_transitions:
@@ -84,18 +84,23 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
         to_state = state_names.index(transition['to'])
         size = int(transition['size'])
 
-        address_symbol = transition['address']
+        base_symbol = transition['base']
 
-        if re.match(r'0x[0-9a-f]+', address_symbol):
-            address = int(address_symbol, 16)
+        if re.match(r'0x[0-9a-f]+', base_symbol):
+            base = int(base_symbol, 16)
         else:
-            address = symbol_map.get(address_symbol, 0)
+            base = symbol_map.get(base_symbol, 0)
 
-        if must_resolve and not address:
+        if must_resolve and not base:
             raise KeyError('Error resolving section %s' % section_name)
 
+        flags = 0
+        flags |= (0x1 if 'r' in transition['flags'] else 0)
+        flags |= (0x2 if 'w' in transition ['flags'] else 0)
+        flags |= (0x4 if 'x' in transition['flags'] else 0)
+
         chunks.append(struct.pack('<IIIIII', DATA_TRANSITION, from_state, to_state,
-            address, size))
+            base, size, flags))
 
     # Pack call transitions
     for transition in call_transitions:
@@ -181,6 +186,9 @@ def main(argv=None):
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
         section_map, symbol_map = parse_link_map(link_map)
+
+        for name, (address, size) in section_map.iteritems():
+            print name, hex(address), hex(size)
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
     if os.path.exists(output_file):

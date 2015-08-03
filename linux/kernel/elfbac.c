@@ -24,6 +24,9 @@ static int elfbac_parse_state(unsigned char **buf, size_t *size,
 	if (parse_ulong(buf, size, &state->stack_id) != 0)
 		return -EINVAL;
 
+	state->pgd = NULL;
+	memset(&state->context, 0, sizeof(mm_context_t));
+
 	return 0;
 }
 
@@ -50,6 +53,8 @@ static int elfbac_parse_data_transition(unsigned char **buf, size_t *size,
 	if (parse_ulong(buf, size, &data_transition->base) != 0)
 		return -EINVAL;
 	if (parse_ulong(buf, size, &data_transition->size) != 0)
+		return -EINVAL;
+	if (parse_ulong(buf, size, &data_transition->flags) != 0)
 		return -EINVAL;
 
 	return 0;
@@ -87,6 +92,9 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 		num_states++;
 	}
 
+	if (num_states == 0)
+		return -EINVAL;
+
 	if (policy->num_stacks > num_states)
 		return -EINVAL;
 
@@ -104,7 +112,12 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 		    data_transition->to > num_states)
 			return -EINVAL;
 
-		if (!access_ok(VERIFY_READ, (void *)section->base, section->size))
+		if (data_transition->flags & PROT_WRITE && !access_ok(VERIFY_WRITE,
+								      (void *)data_transition->base,
+								      data_transition->size))
+			return -EINVAL;
+		else if (!access_ok(VERIFY_READ, (void *)data_transition->base,
+				    data_transition->size))
 			return -EINVAL;
 	}
 
@@ -223,8 +236,10 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	if (elfbac_validate_policy(&policy) != 0)
 		goto out;
 
-	// TODO: Allocate stacks
+	// TODO: Figure out stacks
 
+	policy.current_state = list_entry(policy.states_list.next,
+					  struct elfbac_state, list);
 	*out = policy;
 	retval = 0;
 
@@ -246,3 +261,21 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 {
 	return 0;
 }
+
+bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
+		      unsigned int mask, struct elfbac_state **next_state)
+{
+	printk("Got %lx with mask %x\n", address, mask);
+
+	// Test our shadow page table swapping
+	if (policy->current_state == list_entry(policy->states_list.next,
+						struct elfbac_state, list))
+		*next_state = list_entry(policy->states_list.next->next,
+				     struct elfbac_state, list);
+	else
+		*next_state = NULL;
+
+	// For now, don't deny any requests
+	return true;
+}
+
