@@ -81,12 +81,10 @@ SECTIONS
     .iplt : { *(.iplt) } :text-segment
     {{#text_sections}}
     {{#sections}}
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_start = .;
-    .text.{{name}}.{{#description_to_id}}{{description}}{{/description_to_id}} ALIGN(4096) :
+    .text.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :text-segment
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_end = .;
     {{/sections}}
     {{/text_sections}}
     .text :
@@ -109,12 +107,10 @@ SECTIONS
     PROVIDE (etext = .);
     {{#rodata_sections}}
     {{#sections}}
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_start = .;
-    .rodata.{{name}}.{{#description_to_id}}{{description}}{{/description_to_id}} ALIGN(4096) :
+    .rodata.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :text-segment
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_end = .;
     {{/sections}}
     {{/rodata_sections}}
     .rodata : { *(.rodata .rodata.* .gnu.linkonce.r.*) } :text-segment
@@ -196,12 +192,10 @@ SECTIONS
     .got : { *(.got.plt) *(.igot.plt) *(.got) *(.igot) } :data-segment
     {{#data_sections}}
     {{#sections}}
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_start = .;
-    .data.{{name}}.{{#description_to_id}}{{description}}{{/description_to_id}} ALIGN(4096) :
+    .data.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :data-segment
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_end = .;
     {{/sections}}
     {{/data_sections}}
     .data :
@@ -217,12 +211,10 @@ SECTIONS
     __bss_start__ = .;
     {{#bss_sections}}
     {{#sections}}
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_start = .;
-    .bss.{{name}}.{{#description_to_id}}{{description}}{{/description_to_id}} ALIGN(4096) :
+    .bss.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :data-segment
-    __{{name}}_{{#description_to_id}}{{description}}{{/description_to_id}}_end = .;
     {{/sections}}
     {{/bss_sections}}
     .bss :

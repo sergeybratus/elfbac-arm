@@ -33,25 +33,25 @@
             ]
         }
     ],
-    "transitions": [
+    "call_transitions": [
         {
             "from": "start",
             "to": "parser",
-            "trigger": "do_parse",
+            "address": "do_parse",
             "param_size": 0,
             "return_size": 0
         },
         {
             "from": "parser",
             "to": "libc",
-            "trigger": "__isoc99_scanf",
+            "address": "__isoc99_scanf",
             "param_size": 0,
             "return_size": 0
         },
         {
             "from": "start",
             "to": "libc",
-            "trigger": "printf",
+            "address": "printf",
             "param_size": 0,
             "return_size": 0
         }

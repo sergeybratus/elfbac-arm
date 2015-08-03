@@ -8,18 +8,18 @@
 
 static int parse_ulong(unsigned char **buf, size_t *size, unsigned long *out)
 {
-	 if (*size >= sizeof(unsigned long)) {
-		  *out = *(unsigned long *)(*buf);
-		  *buf += sizeof(unsigned long);
-		  *size -= sizeof(unsigned long);
-		  return 0;
-	 }
+	if (*size >= sizeof(unsigned long)) {
+		*out = *(unsigned long *)(*buf);
+		*buf += sizeof(unsigned long);
+		*size -= sizeof(unsigned long);
+		return 0;
+	}
 
-	 return -1;
+	return -1;
 }
 
 static int elfbac_parse_state(unsigned char **buf, size_t *size,
-		struct elfbac_state *state)
+			      struct elfbac_state *state)
 {
 	if (parse_ulong(buf, size, &state->stack_id) != 0)
 		return -EINVAL;
@@ -28,7 +28,7 @@ static int elfbac_parse_state(unsigned char **buf, size_t *size,
 }
 
 static int elfbac_parse_section(unsigned char **buf, size_t *size,
-		struct elfbac_section *section)
+				struct elfbac_section *section)
 {
 	if (parse_ulong(buf, size, &section->base) != 0)
 		return -EINVAL;
@@ -41,7 +41,7 @@ static int elfbac_parse_section(unsigned char **buf, size_t *size,
 }
 
 static int elfbac_parse_data_transition(unsigned char **buf, size_t *size,
-		struct elfbac_data_transition *data_transition)
+					struct elfbac_data_transition *data_transition)
 {
 	if (parse_ulong(buf, size, &data_transition->to) != 0)
 		return -EINVAL;
@@ -51,14 +51,12 @@ static int elfbac_parse_data_transition(unsigned char **buf, size_t *size,
 		return -EINVAL;
 	if (parse_ulong(buf, size, &data_transition->size) != 0)
 		return -EINVAL;
-	if (parse_ulong(buf, size, &data_transition->flags) != 0)
-		return -EINVAL;
 
 	return 0;
 }
 
 static int elfbac_parse_call_transition(unsigned char **buf, size_t *size,
-		struct elfbac_call_transition *call_transition)
+					struct elfbac_call_transition *call_transition)
 {
 	if (parse_ulong(buf, size, &call_transition->to) != 0)
 		return -EINVAL;
@@ -94,42 +92,37 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 
 	list_for_each_entry(section, &policy->sections_list, list) {
 		if (section->flags & PROT_WRITE && !access_ok(VERIFY_WRITE,
-					(void *)section->base, section->size))
+							      (void *)section->base, section->size))
 			return -EINVAL;
 		else if (!access_ok(VERIFY_READ, (void *)section->base,
-					section->size))
+				    section->size))
 			return -EINVAL;
 	}
 
 	list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
 		if (data_transition->from > num_states ||
-				data_transition->to > num_states)
+		    data_transition->to > num_states)
 			return -EINVAL;
 
-		if (section->flags & PROT_WRITE && !access_ok(VERIFY_WRITE,
-					(void *)section->base, section->size))
-			return -EINVAL;
-		else if (!access_ok(VERIFY_READ, (void *)section->base,
-					section->size))
+		if (!access_ok(VERIFY_READ, (void *)section->base, section->size))
 			return -EINVAL;
 	}
 
 	list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
 		if (call_transition->from > num_states ||
-				call_transition->to > num_states)
+		    call_transition->to > num_states)
 			return -EINVAL;
 
 		if (!access_ok(VERIFY_READ, (void *)call_transition->address,
-					sizeof(unsigned long)))
+			       sizeof(unsigned long)))
 			return -EINVAL;
-
 	}
 
 	return 0;
 }
 
 int elfbac_parse_policy(unsigned char *buf, size_t size,
-		struct elfbac_policy *out)
+			struct elfbac_policy *out)
 {
 	enum {
 		STATE = 1,
@@ -172,13 +165,13 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&policy.states_list, &state->list);
+			list_add_tail(&state->list, &policy.states_list);
 			state = NULL;
 			break;
 		case SECTION:
 			retval = -ENOMEM;
 			section = kmalloc(sizeof(struct elfbac_section),
-					GFP_KERNEL);
+					  GFP_KERNEL);
 			if (!section)
 				goto out;
 
@@ -186,41 +179,39 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&policy.sections_list, &section->list);
+			list_add_tail(&section->list, &policy.sections_list);
 			section = NULL;
 			break;
 		case DATA_TRANSITION:
 			retval = -ENOMEM;
 			data_transition = kmalloc(
-					sizeof(struct elfbac_data_transition),
-					GFP_KERNEL);
+						  sizeof(struct elfbac_data_transition),
+						  GFP_KERNEL);
 			if (!data_transition)
 				goto out;
 
 			retval = elfbac_parse_data_transition(&buf, &size,
-					data_transition);
+							      data_transition);
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&policy.data_transitions_list,
-					&data_transition->list);
+			list_add_tail(&data_transition->list, &policy.data_transitions_list);
 			data_transition = NULL;
 			break;
 		case CALL_TRANSITION:
 			retval = -ENOMEM;
 			call_transition = kmalloc(
-					sizeof(struct elfbac_call_transition),
-					GFP_KERNEL);
+						  sizeof(struct elfbac_call_transition),
+						  GFP_KERNEL);
 			if (!call_transition)
 				goto out;
 
 			retval = elfbac_parse_call_transition(&buf, &size,
-					call_transition);
+							      call_transition);
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&policy.call_transitions_list,
-					&call_transition->list);
+			list_add_tail(&call_transition->list, &policy.call_transitions_list);
 			call_transition = NULL;
 			break;
 		default:

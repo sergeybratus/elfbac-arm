@@ -13,15 +13,9 @@ import tempfile
 
 from elftools.elf.elffile import ELFFile
 
-def description_to_id(description):
-    pattern = re.compile(r'^[*]*([^.:*]*).*\(.*\)')
-    matches = [pattern.match(s) for s in description.split(' ')]
-    return '_'.join([m.group(1) for m in matches if m])
-
 def is_bss(description):
     sections = description.split(' ')
-    pattern = re.compile(r'.*\((.bss|COMMON).*\)')
-    return all(pattern.match(s) for s in sections)
+    return all(re.match(r'.*\((.bss|COMMON).*\)', s) for s in sections)
 
 def render_linker_script(policy, platform, policy_len):
     states = policy['states']
@@ -41,8 +35,6 @@ def render_linker_script(policy, platform, policy_len):
         'bss_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
             for section in state['sections'] if section['permissions'] == 'rw' and \
                     is_bss(section['description'])] } for state in states],
-        # Hacks, see https://github.com/defunkt/pystache/issues/158
-        'description_to_id': lambda s: description_to_id(copy.deepcopy(renderer).render(s, renderer.context))
     }
 
     return renderer.render_name(platform, data)
@@ -51,16 +43,21 @@ def stable_unique(l):
     seen = set()
     return [x for x in l if not (x in seen or seen.add(x))]
 
-def generate_binary_policy(policy, symbol_table, must_resolve=True):
+def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
     STATE = 1
     SECTION = 2
-    TRANSITION = 3
+    DATA_TRANSITION = 3
+    CALL_TRANSITION = 4
 
     chunks = []
     states = policy['states']
-    transitions = policy['transitions']
+    data_transitions = policy.get('data_transitions', [])
+    call_transitions = policy.get('call_transitions', [])
     state_names = [s['name'] for s in states]
     stack_names = stable_unique([s['stack'] for s in states])
+
+    # Pack num stacks
+    chunks.append(struct.pack('<I', len(stack_names)))
 
     # Pack states
     for state in states:
@@ -68,27 +65,40 @@ def generate_binary_policy(policy, symbol_table, must_resolve=True):
         chunks.append(struct.pack('<II', STATE, stack_id))
 
         for section in state['sections']:
-            start_symbol = '__%s_%s_start' % (state['name'], description_to_id(section['description']))
-            end_symbol = '__%s_%s_end' % (state['name'], description_to_id(section['description']))
-
-            start_addr = symbol_table.get(start_symbol, 0)
-            end_addr = symbol_table.get(end_symbol, 0)
-            if must_resolve and start_addr == 0:
-                raise KeyError('Error resolving symbol %s' % start_symbol)
-            if must_resolve and end_addr == 0:
-                raise KeyError('Error resolving symbol %s' % end_symbol)
-
-            size = end_addr - start_addr
-
             permissions = 0
             permissions |= (0x1 if 'r' in section['permissions'] else 0)
             permissions |= (0x2 if 'w' in section['permissions'] else 0)
             permissions |= (0x4 if 'x' in section['permissions'] else 0)
 
-            chunks.append(struct.pack('<IIII', SECTION, start_addr, size, permissions))
+            section_name = [None, '.rodata.', None, '.data.', None, '.text.', None, None][permissions] + \
+                    state['name']
+            if section['permissions'] == 'rw' and is_bss(section['description']):
+                section_name = '.bss.' + state['name']
 
-    # Pack transitions
-    for transition in transitions:
+            address, size = section_map.get(section_name, (0, 0))
+            chunks.append(struct.pack('<IIII', SECTION, address, size, permissions))
+
+    # Pack data transitions
+    for transition in data_transitions:
+        from_state = state_names.index(transition['from'])
+        to_state = state_names.index(transition['to'])
+        size = int(transition['size'])
+
+        address_symbol = transition['address']
+
+        if re.match(r'0x[0-9a-f]+', address_symbol):
+            address = int(address_symbol, 16)
+        else:
+            address = symbol_map.get(address_symbol, 0)
+
+        if must_resolve and not address:
+            raise KeyError('Error resolving section %s' % section_name)
+
+        chunks.append(struct.pack('<IIIIII', DATA_TRANSITION, from_state, to_state,
+            address, size))
+
+    # Pack call transitions
+    for transition in call_transitions:
         from_state = state_names.index(transition['from'])
         to_state = state_names.index(transition['to'])
         param_size = int(transition['param_size'])
@@ -96,22 +106,41 @@ def generate_binary_policy(policy, symbol_table, must_resolve=True):
 
         address_symbol = transition['address']
 
-        address = symbol_table.get(address_symbol, 0)
-        if must_resolve and address == 0:
-            raise KeyError('Error resolving symbol %s' % address_symbol)
+        if re.match(r'0x[0-9a-f]+', address_symbol):
+            address = int(address_symbol, 16)
+        else:
+            address = symbol_map.get(address_symbol, 0)
 
-        chunks.append(struct.pack('<IIIIII', TRANSITION, from_state, to_state,
+        if must_resolve and not address:
+            raise KeyError('Error resolving section %s' % section_name)
+
+        chunks.append(struct.pack('<IIIIII', CALL_TRANSITION, from_state, to_state,
             address, param_size, return_size))
 
     return b''.join(chunks)
 
 def parse_link_map(link_map):
-    # FIXME: This is somewhat janky, elftools symbol parsing is broken ATM
-    # though, so fix later
-    pattern = re.compile(r'^[ ]{16}0x[0-9a-f]+[ ]{16}[a-zA-Z0-9_."]\S*')
-    lines = link_map.splitlines()
-    matches = [line.split()[:2] for line in lines if pattern.match(line)]
-    return { name : int(addr, 16) for (addr, name) in matches }
+    # Skip until memory map begins
+    match = re.search(r'^Linker script and memory map$', link_map, re.MULTILINE)
+    if not match:
+        return {}
+    link_map = link_map[match.end():]
+
+    # Skip discarded sections if possible
+    match = re.search(r'^/DISCARD/$', link_map, re.MULTILINE)
+    if match:
+        link_map = link_map[:match.start()]
+
+    # Find all allocated sections minus our stub policy section and return their
+    # addresses and sizes in a map
+    sections = re.findall(r'^(\.[a-zA-Z0-9_.]+)\s+(0x[a-f0-9]+)\s+(0x[a-f0-9]+)\s+.*$', link_map, re.MULTILINE)
+    section_map = { name: (int(address, 16), int(size, 16)) for (name, address, size) in sections \
+            if name != '.elfbac' and int(size, 16) > 0 }
+
+    symbols = re.findall(r'^ {16}(0x[a-f0-9]+)\s+(\w+)$', link_map, re.MULTILINE)
+    symbol_map = { name: int(address, 16) for (address, name) in symbols }
+
+    return (section_map, symbol_map)
 
 def main(argv=None):
     if argv is None:
@@ -138,7 +167,7 @@ def main(argv=None):
         if args.linker_args[i] == '-o' or args.linker_args[i] == '--output':
             output_file = args.linker_args[i + 1]
 
-    policy_len = len(generate_binary_policy(policy, {}, False))
+    policy_len = len(generate_binary_policy(policy, {}, {}, False))
     linker_script = render_linker_script(policy, 'elf32-littlearm', policy_len)
 
     with tempfile.NamedTemporaryFile('w') as f:
@@ -151,8 +180,7 @@ def main(argv=None):
         cmd = [args.linker] + args.linker_args + \
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
-        print link_map
-        symbol_map = parse_link_map(link_map)
+        section_map, symbol_map = parse_link_map(link_map)
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
     if os.path.exists(output_file):
@@ -164,10 +192,10 @@ def main(argv=None):
 
         assert(elfbac_section['sh_size'] == policy_len)
         offset = elfbac_section['sh_offset']
-        binary_pol = generate_binary_policy(policy, symbol_map)
 
+        binary_pol = generate_binary_policy(policy, section_map, symbol_map)
         new_contents = contents[:offset] + binary_pol + contents[offset + policy_len:]
-            
+ 
         with open(output_file, 'wb') as f:
             f.write(new_contents)
 

@@ -36,7 +36,6 @@ struct elfbac_data_transition {
 	unsigned long from;
 	unsigned long base;
 	unsigned long size;
-	unsigned long flags;
 };
 
 struct elfbac_call_transition {
