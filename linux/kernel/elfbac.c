@@ -1,5 +1,8 @@
+#include <asm/mmu_context.h>
+#include <asm/pgalloc.h>
+
 #include <linux/list.h>
-#include <linux/mman.h>
+#include <linux/mm.h>
 #include <linux/resource.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
@@ -90,6 +93,17 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 			return -EINVAL;
 
 		num_states++;
+
+		list_for_each_entry(section, &state->sections_list, list) {
+			if (section->flags & VM_WRITE && !access_ok(VERIFY_WRITE,
+								      (void *)section->base,
+								      section->size))
+				return -EINVAL;
+			else if (!access_ok(VERIFY_READ, (void *)section->base,
+					    section->size))
+				return -EINVAL;
+		}
+
 	}
 
 	if (num_states == 0)
@@ -98,21 +112,12 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 	if (policy->num_stacks > num_states)
 		return -EINVAL;
 
-	list_for_each_entry(section, &policy->sections_list, list) {
-		if (section->flags & PROT_WRITE && !access_ok(VERIFY_WRITE,
-							      (void *)section->base, section->size))
-			return -EINVAL;
-		else if (!access_ok(VERIFY_READ, (void *)section->base,
-				    section->size))
-			return -EINVAL;
-	}
-
 	list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
 		if (data_transition->from > num_states ||
 		    data_transition->to > num_states)
 			return -EINVAL;
 
-		if (data_transition->flags & PROT_WRITE && !access_ok(VERIFY_WRITE,
+		if (data_transition->flags & VM_WRITE && !access_ok(VERIFY_WRITE,
 								      (void *)data_transition->base,
 								      data_transition->size))
 			return -EINVAL;
@@ -145,6 +150,7 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	} type;
 
 	int retval;
+	unsigned long cur_state_id = 0;
 
 	struct elfbac_policy policy;
 	struct elfbac_state *state = NULL;
@@ -153,7 +159,6 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	struct elfbac_call_transition *call_transition = NULL;
 
 	INIT_LIST_HEAD(&policy.states_list);
-	INIT_LIST_HEAD(&policy.sections_list);
 	INIT_LIST_HEAD(&policy.data_transitions_list);
 	INIT_LIST_HEAD(&policy.call_transitions_list);
 
@@ -178,10 +183,19 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
+			state->id = cur_state_id++;
+			state->pgd = NULL;
+			INIT_LIST_HEAD(&state->sections_list);
 			list_add_tail(&state->list, &policy.states_list);
 			state = NULL;
 			break;
 		case SECTION:
+			if (list_empty(&policy.states_list))
+				goto out;
+			state = list_last_entry(&policy.states_list,
+						struct elfbac_state,
+						list);
+
 			retval = -ENOMEM;
 			section = kmalloc(sizeof(struct elfbac_section),
 					  GFP_KERNEL);
@@ -192,7 +206,8 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&section->list, &policy.sections_list);
+			list_add_tail(&section->list, &state->sections_list);
+			state = NULL;
 			section = NULL;
 			break;
 		case DATA_TRANSITION:
@@ -265,17 +280,34 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
 		      unsigned int mask, struct elfbac_state **next_state)
 {
-	printk("Got %lx with mask %x\n", address, mask);
-
-	// Test our shadow page table swapping
-	if (policy->current_state == list_entry(policy->states_list.next,
-						struct elfbac_state, list))
-		*next_state = list_entry(policy->states_list.next->next,
-				     struct elfbac_state, list);
-	else
-		*next_state = NULL;
 
 	// For now, don't deny any requests
+	*next_state = NULL;
 	return true;
+}
+
+int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
+			struct vm_area_struct *vma, pte_t pte,
+			unsigned long address)
+{
+	// Very similar to __handle_mm_fault from mm/memory.c
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *ptep;
+
+	pgd = policy->current_state->pgd;
+	pud = pud_alloc(mm, pgd, address);
+	if (!pud)
+		return VM_FAULT_OOM;
+	pmd = pmd_alloc(mm, pud, address);
+	if (!pmd)
+		return VM_FAULT_OOM;
+
+	// TODO: Figure out the hugepages stuff which may need to happen
+	ptep = pte_alloc_map(mm, vma, pmd, address);
+	set_pte_at(mm, address, ptep, pte);
+
+	return 0;
 }
 

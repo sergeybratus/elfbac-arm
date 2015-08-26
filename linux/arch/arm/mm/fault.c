@@ -230,7 +230,7 @@ __do_page_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 		unsigned int flags, struct task_struct *tsk)
 {
 	struct vm_area_struct *vma;
-	int fault;
+	int fault, is_stack = 0;
 
 	vma = find_vma(mm, addr);
 	fault = VM_FAULT_BADMAP;
@@ -251,50 +251,74 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
+		pgd_t *pgd;
+		pud_t *pud;
+		pmd_t *pmd;
+		pte_t *ptep;
 		struct elfbac_state *next_state;
 
-		/* From access_error below */
+		/* From access_error above */
 		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
+		printk("IN ELFBAC FAULT, addr=%lx\n", addr);
 		if (fsr & FSR_WRITE)
 			mask = VM_WRITE;
 		if (fsr & FSR_LNX_PF)
 			mask = VM_EXEC;
 
 		fault = VM_FAULT_BADACCESS;
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) && !is_stack)
+			goto out;
 
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state))
+		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
+		if (fault != 0)
+			goto out;
+
+		fault = VM_FAULT_BADACCESS;
+		pgd = pgd_offset(mm, addr);
+		if (pgd_none(*pgd) || pgd_bad(*pgd))
+			goto out;
+		pud = pud_offset(pgd, addr);
+		if (pud_none(*pud) || pud_bad(*pud))
+			goto out;
+		pmd = pmd_offset(pud, addr);
+		if (pmd_none(*pmd) || pmd_bad(*pmd))
+			goto out;
+		ptep = pte_offset_map(pmd, addr);
+		if (!ptep || !pte_present(*ptep))
 			goto out;
 
 		if (next_state) {
 			printk("DOING A PGD SWAP!\n");
-			spin_lock(&mm->page_table_lock);
-
-			if (!next_state->pgd) {
-				next_state->pgd = pgd_alloc(mm);
-				if (!next_state->pgd)
-					goto out;
-
-				if (init_new_context(current, mm)) {
-					pgd_free(mm, next_state->pgd);
-					goto out;
-				}
-			}
-
-			check_and_switch_context(mm, current);
 			mm->elfbac_policy->current_state = next_state;
-
-			spin_unlock(&mm->page_table_lock);
 		}
-	}
-#endif
 
+		if (!mm->elfbac_policy->current_state->pgd) {
+			// TODO: See if this causes breakage in
+			// struct mm_struct for other archs
+			mm->elfbac_policy->current_state->pgd = pgd_alloc(mm);
+			if (!mm->elfbac_policy->current_state->pgd)
+				goto out;
+
+			// FIXME: This is platform-specific, can we make it not
+			// be?
+			atomic64_set(&mm->elfbac_policy->current_state->context.id, 0);
+		}
+
+		return elfbac_copy_mapping(mm->elfbac_policy, mm, vma, *ptep, addr);
+	} else {
+		return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
+	}
+#else
 	return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
+#endif
 
 check_stack:
 	/* Don't allow expansion below FIRST_USER_ADDRESS */
 	if (vma->vm_flags & VM_GROWSDOWN &&
-	    addr >= FIRST_USER_ADDRESS && !expand_stack(vma, addr))
+	    addr >= FIRST_USER_ADDRESS && !expand_stack(vma, addr)) {
+		is_stack = 1;
 		goto good_area;
+	}
 out:
 	return fault;
 }

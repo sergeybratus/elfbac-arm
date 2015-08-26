@@ -13,7 +13,7 @@ sudo mkfs.ext4 -O ^huge_file /dev/nbd0p1
 
 mkdir rootfs
 sudo mount /dev/nbd0p1 rootfs
-sudo debootstrap --arch=armhf --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg --include openssh-server --verbose --foreign trusty rootfs
+sudo debootstrap --arch=armhf --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg --include openssh-server,gdb,strace --verbose --foreign trusty rootfs
 
 # Provision new system
 echo "proc              /proc   proc    nodev,noexec,nosuid         0 0" | sudo tee rootfs/etc/fstab
@@ -35,6 +35,7 @@ sudo mount /dev/nbd0p1 rootfs
 sudo sed -e "s/PermitRootLogin without-password/PermitRootLogin yes/" -i rootfs/etc/ssh/sshd_config
 sudo umount rootfs
 sudo qemu-nbd -d /dev/nbd0
+rmdir rootfs
 
 popd
 
