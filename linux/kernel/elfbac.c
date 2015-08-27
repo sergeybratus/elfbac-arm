@@ -305,6 +305,8 @@ int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 		return VM_FAULT_OOM;
 
 	// TODO: Figure out the hugepages stuff which may need to happen
+	printk("COPYING PTE, addr = %lx, pte_present(pte) == %d\n", address,
+	       pte_present(pte));
 	ptep = pte_alloc_map(mm, vma, pmd, address);
 	set_pte_at(mm, address, ptep, pte);
 

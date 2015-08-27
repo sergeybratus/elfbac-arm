@@ -259,7 +259,6 @@ good_area:
 
 		/* From access_error above */
 		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
-		printk("IN ELFBAC FAULT, addr=%lx\n", addr);
 		if (fsr & FSR_WRITE)
 			mask = VM_WRITE;
 		if (fsr & FSR_LNX_PF)
@@ -293,17 +292,16 @@ good_area:
 		}
 
 		if (!mm->elfbac_policy->current_state->pgd) {
-			// TODO: See if this causes breakage in
-			// struct mm_struct for other archs
+			// TODO: See if this causes breakage
 			mm->elfbac_policy->current_state->pgd = pgd_alloc(mm);
 			if (!mm->elfbac_policy->current_state->pgd)
 				goto out;
 
-			// FIXME: This is platform-specific, can we make it not
-			// be?
+			// Can we re-use init_new_context here?
 			atomic64_set(&mm->elfbac_policy->current_state->context.id, 0);
 		}
 
+		show_pte(mm, addr);
 		return elfbac_copy_mapping(mm->elfbac_policy, mm, vma, *ptep, addr);
 	} else {
 		return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
