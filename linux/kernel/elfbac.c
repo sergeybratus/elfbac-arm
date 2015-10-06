@@ -261,7 +261,7 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	policy.current_state = list_entry(policy.states_list.next,
 					  struct elfbac_state, list);
 	*out = policy;
-	retval = 0;
+	return 0;
 
 out:
 	elfbac_policy_destroy(&policy);
@@ -274,12 +274,124 @@ out:
 
 void elfbac_policy_destroy(struct elfbac_policy *policy)
 {
+	struct elfbac_state *state, *nstate;
+	struct elfbac_section *section, *nsection;
+	struct elfbac_data_transition *data_transition, *ndata_transition;
+	struct elfbac_call_transition *call_transition, *ncall_transition;
 
+	list_for_each_entry_safe(state, nstate, &policy->states_list, list) {
+		list_for_each_entry_safe(section, nsection, &state->sections_list, list)
+			kfree(section);
+
+		kfree(state);
+	}
+
+	list_for_each_entry_safe(data_transition, ndata_transition, &policy->data_transitions_list, list)
+		kfree(data_transition);
+
+	list_for_each_entry_safe(call_transition, ncall_transition, &policy->call_transitions_list, list)
+		kfree(call_transition);
 }
 
 int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 {
+	int retval;
+
+	struct elfbac_policy policy;
+	struct elfbac_state *state, *new_state = NULL;
+	struct elfbac_section *section, *new_section = NULL;
+	struct elfbac_data_transition *data_transition, *new_data_transition = NULL;
+	struct elfbac_call_transition *call_transition, *new_call_transition = NULL;
+
+	policy.num_stacks = orig->num_stacks;
+	INIT_LIST_HEAD(&policy.states_list);
+	INIT_LIST_HEAD(&policy.data_transitions_list);
+	INIT_LIST_HEAD(&policy.call_transitions_list);
+
+	list_for_each_entry(state, &orig->states_list, list) {
+		retval = -ENOMEM;
+		new_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL);
+
+		if (!new_state)
+			goto out;
+
+		memset(new_state, '\0', sizeof(struct elfbac_state));
+
+		new_state->id = state->id;
+		INIT_LIST_HEAD(&new_state->list);
+		INIT_LIST_HEAD(&new_state->sections_list);
+		list_add_tail(&state->list, &policy.states_list);
+
+		if (new_state->id == orig->current_state->id)
+			policy.current_state = new_state;
+
+		list_for_each_entry(section, &state->sections_list, list) {
+			retval = -ENOMEM;
+			new_section = kmalloc(sizeof(struct elfbac_section),
+					    GFP_KERNEL);
+
+			if (!new_section)
+				goto out;
+
+			memcpy(new_section, section,
+			       sizeof(struct elfbac_section));
+
+			INIT_LIST_HEAD(&new_section->list);
+			list_add_tail(&section->list, &new_state->sections_list);
+
+			new_section = NULL;
+		}
+
+		new_state = NULL;
+
+	}
+
+	list_for_each_entry(data_transition, &orig->data_transitions_list, list) {
+		retval = -ENOMEM;
+		new_data_transition = kmalloc(sizeof(struct elfbac_data_transition),
+				    GFP_KERNEL);
+
+		if (!new_data_transition)
+			goto out;
+
+		memcpy(new_data_transition, data_transition,
+		       sizeof(struct elfbac_data_transition));
+
+		INIT_LIST_HEAD(&new_data_transition->list);
+		list_add_tail(&new_data_transition->list,
+			      &policy.data_transitions_list);
+
+		new_data_transition = NULL;
+	}
+
+	list_for_each_entry(call_transition, &orig->call_transitions_list, list) {
+		retval = -ENOMEM;
+		new_call_transition = kmalloc(sizeof(struct elfbac_call_transition),
+				    GFP_KERNEL);
+
+		if (!new_call_transition)
+			goto out;
+
+		memcpy(new_call_transition, call_transition,
+		       sizeof(struct elfbac_call_transition));
+
+		INIT_LIST_HEAD(&new_call_transition->list);
+		list_add_tail(&new_call_transition->list,
+			      &policy.call_transitions_list);
+
+		new_call_transition = NULL;
+	}
+
+	*new = policy;
 	return 0;
+
+out:
+	elfbac_policy_destroy(&policy);
+	kfree(new_state);
+	kfree(new_section);
+	kfree(new_data_transition);
+	kfree(new_call_transition);
+	return retval;
 }
 
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
