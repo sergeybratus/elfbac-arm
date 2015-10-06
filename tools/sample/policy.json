@@ -6,6 +6,7 @@
             "sections": [
                 { "description": "*crt*(.text*) *main.o(.text*)", "flags": "rx" },
                 { "description": "*crt*(.rodata*) *main.o(.rodata*)", "flags": "r" },
+                { "description": "*(.data.rel.ro)", "flags": "rw" },
                 { "description": "*main.o(.data.parse_result)", "flags": "rw" },
                 { "description": "*crt*(.data*) *main.o(.data*)", "flags": "rw" },
                 { "description": "*crt*(.bss*) *crt*(COMMON) *main.o(.bss*) *main.o(COMMON)", "flags": "rw" }
@@ -18,6 +19,7 @@
                 { "description": "*parser.o(.text*)", "flags": "rx" },
                 { "description": "*parser.o(.rodata*)", "flags": "r" },
                 { "description": "*parser.o(.data*)", "flags": "rw" },
+                { "description": "*(.data.rel.ro)", "flags": "rw" },
                 { "description": "*main.o(.data.parse_result)", "flags": "rw" },
                 { "description": "*parser.o(.bss*) *parser.o(COMMON)", "flags": "rw" }
             ]
@@ -28,6 +30,7 @@
             "sections" : [
                 { "description": "*libc.a:(.text*) *libgcc*:(.text*)", "flags": "rx" },
                 { "description": "*libc.a:(.rodata*) *libgcc*:(.rodata*)", "flags": "r" },
+                { "description": "*(.data.rel.ro)", "flags": "rw" },
                 { "description": "*libc.a:(.data*) *libgcc*:(.data*)", "flags": "rw" },
                 { "description": "*libc.a:(.bss*) *libgcc*:(.bss*) *libc.a:(COMMON) *libgcc*:(COMMON)", "flags": "rw" }
             ]

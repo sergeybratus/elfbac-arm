@@ -41,7 +41,7 @@ struct elfbac_call_transition {
 	struct list_head list;
 	unsigned long to;
 	unsigned long from;
-	unsigned long address;
+	unsigned long addr;
 	unsigned long param_size;
 	unsigned long return_size;
 };
@@ -58,7 +58,7 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 		struct elfbac_policy *policy);
 void elfbac_policy_destroy(struct elfbac_policy *policy);
 int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new);
-bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
+bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		      unsigned int mask, struct elfbac_state **next_state);
 int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 			struct vm_area_struct *vma, unsigned long addr);

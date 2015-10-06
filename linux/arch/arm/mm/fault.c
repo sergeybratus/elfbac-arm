@@ -271,8 +271,12 @@ good_area:
 			mask = VM_EXEC;
 
 		fault = VM_FAULT_BADACCESS;
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) && !is_stack)
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) && !is_stack) {
+			printk("GOT ELFBAC POLICY VIOLATION\n");
 			goto out;
+		}
+
+		printk("next_state: %p\n", next_state);
 
 		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 		if (fault != 0)

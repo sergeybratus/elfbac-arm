@@ -75,7 +75,7 @@ static int elfbac_parse_call_transition(unsigned char **buf, size_t *size,
 		return -EINVAL;
 	if (parse_ulong(buf, size, &call_transition->from) != 0)
 		return -EINVAL;
-	if (parse_ulong(buf, size, &call_transition->address) != 0)
+	if (parse_ulong(buf, size, &call_transition->addr) != 0)
 		return -EINVAL;
 	if (parse_ulong(buf, size, &call_transition->param_size) != 0)
 		return -EINVAL;
@@ -88,10 +88,10 @@ static int elfbac_parse_call_transition(unsigned char **buf, size_t *size,
 static int elfbac_validate_policy(struct elfbac_policy *policy)
 {
 	unsigned long num_states = 0;
-	struct elfbac_state *state = NULL;
-	struct elfbac_section *section = NULL;
-	struct elfbac_data_transition *data_transition = NULL;
-	struct elfbac_call_transition *call_transition = NULL;
+	struct elfbac_state *state;
+	struct elfbac_section *section;
+	struct elfbac_data_transition *data_transition;
+	struct elfbac_call_transition *call_transition;
 
 	list_for_each_entry(state, &policy->states_list, list) {
 		if (state->stack_id >= policy->num_stacks)
@@ -136,7 +136,7 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 		    call_transition->to > num_states)
 			return -EINVAL;
 
-		if (!access_ok(VERIFY_READ, (void *)call_transition->address,
+		if (!access_ok(VERIFY_READ, (void *)call_transition->addr,
 			       sizeof(unsigned long)))
 			return -EINVAL;
 	}
@@ -157,18 +157,17 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	int retval;
 	unsigned long cur_state_id = 0;
 
-	struct elfbac_policy policy;
 	struct elfbac_state *state = NULL;
 	struct elfbac_section *section = NULL;
 	struct elfbac_data_transition *data_transition = NULL;
 	struct elfbac_call_transition *call_transition = NULL;
 
-	INIT_LIST_HEAD(&policy.states_list);
-	INIT_LIST_HEAD(&policy.data_transitions_list);
-	INIT_LIST_HEAD(&policy.call_transitions_list);
+	INIT_LIST_HEAD(&out->states_list);
+	INIT_LIST_HEAD(&out->data_transitions_list);
+	INIT_LIST_HEAD(&out->call_transitions_list);
 
 	retval = -EINVAL;
-	if (parse_ulong(&buf, &size, &policy.num_stacks) != 0)
+	if (parse_ulong(&buf, &size, &out->num_stacks) != 0)
 		goto out;
 
 	while (size) {
@@ -191,13 +190,13 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			state->id = cur_state_id++;
 			state->pgd = NULL;
 			INIT_LIST_HEAD(&state->sections_list);
-			list_add_tail(&state->list, &policy.states_list);
+			list_add_tail(&state->list, &out->states_list);
 			state = NULL;
 			break;
 		case SECTION:
-			if (list_empty(&policy.states_list))
+			if (list_empty(&out->states_list))
 				goto out;
-			state = list_last_entry(&policy.states_list,
+			state = list_last_entry(&out->states_list,
 						struct elfbac_state,
 						list);
 
@@ -228,7 +227,7 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&data_transition->list, &policy.data_transitions_list);
+			list_add_tail(&data_transition->list, &out->data_transitions_list);
 			data_transition = NULL;
 			break;
 		case CALL_TRANSITION:
@@ -244,7 +243,7 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
-			list_add_tail(&call_transition->list, &policy.call_transitions_list);
+			list_add_tail(&call_transition->list, &out->call_transitions_list);
 			call_transition = NULL;
 			break;
 		default:
@@ -253,18 +252,16 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	}
 
 	retval = -EINVAL;
-	if (elfbac_validate_policy(&policy) != 0)
+	if (elfbac_validate_policy(out) != 0)
 		goto out;
 
 	// TODO: Figure out stacks
 
-	policy.current_state = list_entry(policy.states_list.next,
-					  struct elfbac_state, list);
-	*out = policy;
+	out->current_state = list_entry(out->states_list.next, struct elfbac_state, list);
 	return 0;
 
 out:
-	elfbac_policy_destroy(&policy);
+	elfbac_policy_destroy(out);
 	kfree(state);
 	kfree(section);
 	kfree(data_transition);
@@ -279,6 +276,7 @@ void elfbac_policy_destroy(struct elfbac_policy *policy)
 	struct elfbac_data_transition *data_transition, *ndata_transition;
 	struct elfbac_call_transition *call_transition, *ncall_transition;
 
+	// TODO: Destroy pgd's
 	list_for_each_entry_safe(state, nstate, &policy->states_list, list) {
 		list_for_each_entry_safe(section, nsection, &state->sections_list, list)
 			kfree(section);
@@ -297,16 +295,15 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 {
 	int retval;
 
-	struct elfbac_policy policy;
 	struct elfbac_state *state, *new_state = NULL;
 	struct elfbac_section *section, *new_section = NULL;
 	struct elfbac_data_transition *data_transition, *new_data_transition = NULL;
 	struct elfbac_call_transition *call_transition, *new_call_transition = NULL;
 
-	policy.num_stacks = orig->num_stacks;
-	INIT_LIST_HEAD(&policy.states_list);
-	INIT_LIST_HEAD(&policy.data_transitions_list);
-	INIT_LIST_HEAD(&policy.call_transitions_list);
+	new->num_stacks = orig->num_stacks;
+	INIT_LIST_HEAD(&new->states_list);
+	INIT_LIST_HEAD(&new->data_transitions_list);
+	INIT_LIST_HEAD(&new->call_transitions_list);
 
 	list_for_each_entry(state, &orig->states_list, list) {
 		retval = -ENOMEM;
@@ -320,10 +317,10 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 		new_state->id = state->id;
 		INIT_LIST_HEAD(&new_state->list);
 		INIT_LIST_HEAD(&new_state->sections_list);
-		list_add_tail(&state->list, &policy.states_list);
+		list_add_tail(&state->list, &new->states_list);
 
 		if (new_state->id == orig->current_state->id)
-			policy.current_state = new_state;
+			new->current_state = new_state;
 
 		list_for_each_entry(section, &state->sections_list, list) {
 			retval = -ENOMEM;
@@ -359,7 +356,7 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 
 		INIT_LIST_HEAD(&new_data_transition->list);
 		list_add_tail(&new_data_transition->list,
-			      &policy.data_transitions_list);
+			      &new->data_transitions_list);
 
 		new_data_transition = NULL;
 	}
@@ -377,16 +374,15 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 
 		INIT_LIST_HEAD(&new_call_transition->list);
 		list_add_tail(&new_call_transition->list,
-			      &policy.call_transitions_list);
+			      &new->call_transitions_list);
 
 		new_call_transition = NULL;
 	}
 
-	*new = policy;
 	return 0;
 
 out:
-	elfbac_policy_destroy(&policy);
+	elfbac_policy_destroy(new);
 	kfree(new_state);
 	kfree(new_section);
 	kfree(new_data_transition);
@@ -394,13 +390,85 @@ out:
 	return retval;
 }
 
-bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
+static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsigned long id)
+{
+	struct elfbac_state *state;
+
+	list_for_each_entry(state, &policy->states_list, list)
+		if (id-- == 0)
+			return state;
+
+	return NULL;
+}
+
+bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		      unsigned int mask, struct elfbac_state **next_state)
 {
+	unsigned long start, end;
+	struct elfbac_state *state;
+	struct elfbac_section *section;
+	struct elfbac_data_transition *data_transition;
+	struct elfbac_call_transition *call_transition;
 
-	// For now, don't deny any requests
 	*next_state = NULL;
-	return true;
+
+	// Common case, addr is allowed in current state
+	list_for_each_entry(section, &policy->current_state->sections_list, list) {
+		start = section->base;
+		end = start + section->size;
+
+		printk("Checking %08x in [%08x, %08x]\n", addr, start, end);
+
+		if (section->flags & mask && addr >= start && addr <= end)
+			return true;
+	}
+
+	if (mask & VM_EXEC) {
+		list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
+			if (call_transition->from == policy->current_state->id) {
+				state = get_state_by_id(policy, call_transition->to);
+
+				if (!state)
+					continue;
+
+				list_for_each_entry(section, &state->sections_list, list) {
+					start = section->base;
+					end = start + section->size;
+
+					printk("CALL Checking %08x in [%08x, %08x]\n", addr, start, end);
+
+					if (section->flags & mask && addr >= start && addr <= end) {
+						*next_state = state;
+						return true;
+					}
+				}
+			}
+		}
+	} else {
+		list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
+			if (data_transition->from == policy->current_state->id) {
+				state = get_state_by_id(policy, data_transition->to);
+
+				if (!state)
+					continue;
+
+				list_for_each_entry(section, &state->sections_list, list) {
+					start = section->base;
+					end = start + section->size;
+
+					printk("DATA Checking %08x in [%08x, %08x]\n", addr, start, end);
+
+					if (section->flags & mask && addr >= start && addr <= end) {
+						*next_state = state;
+						return true;
+					}
+				}
+			}
+		}
+	}
+
+	printk("Returning false\n");
+	return false;
 }
 
 /* Modified routines from mm/memory.c
