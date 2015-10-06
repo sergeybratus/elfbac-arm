@@ -69,8 +69,18 @@ void show_pte(struct mm_struct *mm, unsigned long addr)
 	if (!mm)
 		mm = &init_mm;
 
+#ifdef CONFIG_ELFBAC
+	if (mm->elfbac_policy) {
+		pr_alert("pgd = %p\n", mm->elfbac_policy->current_state->pgd);
+		pgd = mm->elfbac_policy->current_state->pgd + pgd_index(addr);
+	} else {
+		pr_alert("pgd = %p\n", mm->pgd);
+		pgd = pgd_offset(mm, addr);
+	}
+#else
 	pr_alert("pgd = %p\n", mm->pgd);
 	pgd = pgd_offset(mm, addr);
+#endif
 	pr_alert("[%08lx] *pgd=%08llx",
 			addr, (long long)pgd_val(*pgd));
 
@@ -251,10 +261,6 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		pgd_t *pgd;
-		pud_t *pud;
-		pmd_t *pmd;
-		pte_t *ptep;
 		struct elfbac_state *next_state;
 
 		/* From access_error above */
@@ -272,22 +278,8 @@ good_area:
 		if (fault != 0)
 			goto out;
 
-		fault = VM_FAULT_BADACCESS;
-		pgd = pgd_offset(mm, addr);
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
-			goto out;
-		pud = pud_offset(pgd, addr);
-		if (pud_none(*pud) || pud_bad(*pud))
-			goto out;
-		pmd = pmd_offset(pud, addr);
-		if (pmd_none(*pmd) || pmd_bad(*pmd))
-			goto out;
-		ptep = pte_offset_map(pmd, addr);
-		if (!ptep || !pte_present(*ptep))
-			goto out;
-
 		if (next_state) {
-			printk("DOING A PGD SWAP!\n");
+			printk("ELFBAC STATE TRANSITION\n");
 			mm->elfbac_policy->current_state = next_state;
 		}
 
@@ -301,8 +293,7 @@ good_area:
 			atomic64_set(&mm->elfbac_policy->current_state->context.id, 0);
 		}
 
-		show_pte(mm, addr);
-		return elfbac_copy_mapping(mm->elfbac_policy, mm, vma, *ptep, addr);
+		return elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr);
 	} else {
 		return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 	}

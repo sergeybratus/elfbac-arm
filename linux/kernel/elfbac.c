@@ -1,10 +1,15 @@
 #include <asm/mmu_context.h>
 #include <asm/pgalloc.h>
+#include <asm/pgtable.h>
 
 #include <linux/list.h>
 #include <linux/mm.h>
+#include <linux/mm_types.h>
 #include <linux/resource.h>
+#include <linux/rmap.h>
 #include <linux/slab.h>
+#include <linux/swap.h>
+#include <linux/swapops.h>
 #include <linux/uaccess.h>
 
 #include <linux/elfbac.h>
@@ -286,30 +291,232 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
 	return true;
 }
 
-int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
-			struct vm_area_struct *vma, pte_t pte,
-			unsigned long address)
+/* Modified routines from mm/memory.c
+ * TODO: Potentially factor out common code to reduce duplication
+ * TODO: Hugepages support
+ */
+static inline void init_rss_vec(int *rss)
 {
-	// Very similar to __handle_mm_fault from mm/memory.c
-	pgd_t *pgd;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *ptep;
+	memset(rss, 0, sizeof(int) * NR_MM_COUNTERS);
+}
 
-	pgd = policy->current_state->pgd;
-	pud = pud_alloc(mm, pgd, address);
-	if (!pud)
-		return VM_FAULT_OOM;
-	pmd = pmd_alloc(mm, pud, address);
-	if (!pmd)
-		return VM_FAULT_OOM;
+static inline void add_mm_rss_vec(struct mm_struct *mm, int *rss)
+{
+	int i;
 
-	// TODO: Figure out the hugepages stuff which may need to happen
-	printk("COPYING PTE, addr = %lx, pte_present(pte) == %d\n", address,
-	       pte_present(pte));
-	ptep = pte_alloc_map(mm, vma, pmd, address);
-	set_pte_at(mm, address, ptep, pte);
+	if (current->mm == mm)
+		sync_mm_rss(mm);
+	for (i = 0; i < NR_MM_COUNTERS; i++)
+		if (rss[i])
+			add_mm_counter(mm, i, rss[i]);
+}
 
+static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
+		pte_t *dst_pte, pte_t *src_pte, struct vm_area_struct *vma,
+		unsigned long addr, int *rss)
+{
+	pte_t pte = *src_pte;
+	struct page *page;
+
+	/* pte contains position in file, so copy. */
+	if (unlikely(!pte_present(pte))) {
+		swp_entry_t entry = pte_to_swp_entry(pte);
+
+		if (likely(!non_swap_entry(entry))) {
+			if (swap_duplicate(entry) < 0)
+				return entry.val;
+		} else if (is_migration_entry(entry)) {
+			page = migration_entry_to_page(entry);
+
+			if (PageAnon(page))
+				rss[MM_ANONPAGES]++;
+			else
+				rss[MM_FILEPAGES]++;
+		}
+		goto out_set_pte;
+	}
+
+	page = vm_normal_page(vma, addr, pte);
+	if (page) {
+		get_page(page);
+		page_dup_rmap(page);
+		if (PageAnon(page))
+			rss[MM_ANONPAGES]++;
+		else
+			rss[MM_FILEPAGES]++;
+	}
+
+out_set_pte:
+	set_pte_at(mm, addr, dst_pte, pte);
 	return 0;
+}
+
+static int elfbac_copy_pte_range(struct mm_struct *mm, pmd_t *dst_pmd,
+		pmd_t *src_pmd, struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pte_t *orig_src_pte, *orig_dst_pte;
+	pte_t *src_pte, *dst_pte;
+	spinlock_t *dst_ptl;
+	int progress = 0;
+	int rss[NR_MM_COUNTERS];
+	swp_entry_t entry = (swp_entry_t){0};
+
+again:
+	init_rss_vec(rss);
+
+	dst_pte = pte_alloc_map_lock(mm, dst_pmd, addr, &dst_ptl);
+	if (!dst_pte)
+		return -ENOMEM;
+	src_pte = pte_offset_map(src_pmd, addr);
+	orig_src_pte = src_pte;
+	orig_dst_pte = dst_pte;
+	arch_enter_lazy_mmu_mode();
+
+	do {
+		if (pte_none(*src_pte)) {
+			progress++;
+			continue;
+		}
+		entry.val = elfbac_copy_one_pte(mm, dst_pte, src_pte,
+							vma, addr, rss);
+		if (entry.val)
+			break;
+		progress += 8;
+	} while (dst_pte++, src_pte++, addr += PAGE_SIZE, addr != end);
+
+	arch_leave_lazy_mmu_mode();
+	pte_unmap(orig_src_pte);
+	add_mm_rss_vec(mm, rss);
+	pte_unmap_unlock(orig_dst_pte, dst_ptl);
+	cond_resched();
+
+	if (entry.val) {
+		if (add_swap_count_continuation(entry, GFP_KERNEL) < 0)
+			return -ENOMEM;
+		progress = 0;
+	}
+
+	if (addr != end)
+		goto again;
+	return 0;
+}
+
+static inline int elfbac_copy_pmd_range(struct mm_struct *mm, pud_t *dst_pud,
+		pud_t *src_pud, struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pmd_t *src_pmd, *dst_pmd;
+	unsigned long next;
+
+	dst_pmd = pmd_alloc(mm, dst_pud, addr);
+	if (!dst_pmd)
+		return -ENOMEM;
+	src_pmd = pmd_offset(src_pud, addr);
+	do {
+		next = pmd_addr_end(addr, end);
+//		if (pmd_trans_huge(*src_pmd)) {
+//			int err;
+//			VM_BUG_ON(next-addr != HPAGE_PMD_SIZE);
+//			err = copy_huge_pmd(mm, src_mm,
+//					    dst_pmd, src_pmd, addr, vma);
+//			if (err == -ENOMEM)
+//				return -ENOMEM;
+//			if (!err)
+//				continue;
+//			/* fall through */
+//		}
+		if (pmd_none_or_clear_bad(src_pmd))
+			continue;
+		if (elfbac_copy_pte_range(mm, dst_pmd, src_pmd,
+						vma, addr, next))
+			return -ENOMEM;
+	} while (dst_pmd++, src_pmd++, addr = next, addr != end);
+	return 0;
+}
+
+static inline int elfbac_copy_pud_range(struct mm_struct *mm, pgd_t *dst_pgd,
+		pgd_t *src_pgd, struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pud_t *src_pud, *dst_pud;
+	unsigned long next;
+
+	dst_pud = pud_alloc(mm, dst_pgd, addr);
+	if (!dst_pud)
+		return -ENOMEM;
+	src_pud = pud_offset(src_pgd, addr);
+	do {
+		next = pud_addr_end(addr, end);
+		if (pud_none_or_clear_bad(src_pud))
+			continue;
+		if (elfbac_copy_pmd_range(mm, dst_pud, src_pud,
+						vma, addr, next))
+			return -ENOMEM;
+	} while (dst_pud++, src_pud++, addr = next, addr != end);
+	return 0;
+}
+
+static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
+		struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pgd_t *src_pgd = mm->pgd;
+	unsigned long next;
+	int ret;
+
+	if (vma->vm_start > addr || end > vma->vm_end)
+		return -EINVAL;
+
+	/*
+	 * Don't copy ptes where a page fault will fill them correctly.
+	 * Fork becomes much lighter when there are big shared or private
+	 * readonly mappings. The tradeoff is that copy_page_range is more
+	 * efficient than faulting.
+	 */
+//	if (!(vma->vm_flags & (VM_HUGETLB | VM_PFNMAP | VM_MIXEDMAP)) &&
+//			!vma->anon_vma)
+//		return 0;
+
+//	if (is_vm_hugetlb_page(vma))
+//		return copy_hugetlb_page_range(mm, src_mm, vma);
+
+	if (unlikely(vma->vm_flags & VM_PFNMAP)) {
+		/*
+		 * We do not free on error cases below as remove_vma
+		 * gets called on error from higher level routine
+		 */
+		ret = track_pfn_copy(vma);
+		if (ret)
+			return ret;
+	}
+
+	ret = 0;
+	src_pgd = pgd_offset(mm, addr);
+	do {
+		next = pgd_addr_end(addr, end);
+		if (pgd_none_or_clear_bad(src_pgd))
+			continue;
+		if (unlikely(elfbac_copy_pud_range(mm, dst_pgd, src_pgd,
+					    vma, addr, next))) {
+			ret = -ENOMEM;
+			break;
+		}
+	} while (dst_pgd++, src_pgd++, addr = next, addr != end);
+
+	return ret;
+}
+
+int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
+			struct vm_area_struct *vma, unsigned long addr)
+{
+	pgd_t *dst_pgd = policy->current_state->pgd + pgd_index(addr);
+	unsigned long start = rounddown(addr, PAGE_SIZE);
+	unsigned long end = roundup(addr, PAGE_SIZE);
+
+	if (start == end)
+		end += PAGE_SIZE;
+
+	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end);
 }
 

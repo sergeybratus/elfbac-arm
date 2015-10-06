@@ -61,8 +61,7 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new);
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long address,
 		      unsigned int mask, struct elfbac_state **next_state);
 int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
-			struct vm_area_struct *vma, pte_t pte,
-			unsigned long address);
+			struct vm_area_struct *vma, unsigned long addr);
 
 #endif /* ! __LINUX_ELFBAC_H */
 
