@@ -30,8 +30,8 @@ struct elfbac_section {
 
 struct elfbac_data_transition {
 	struct list_head list;
-	unsigned long to;
 	unsigned long from;
+	unsigned long to;
 	unsigned long base;
 	unsigned long size;
 	unsigned long flags;
@@ -39,8 +39,8 @@ struct elfbac_data_transition {
 
 struct elfbac_call_transition {
 	struct list_head list;
-	unsigned long to;
 	unsigned long from;
+	unsigned long to;
 	unsigned long addr;
 	unsigned long param_size;
 	unsigned long return_size;

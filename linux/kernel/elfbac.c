@@ -54,9 +54,9 @@ static int elfbac_parse_section(unsigned char **buf, size_t *size,
 static int elfbac_parse_data_transition(unsigned char **buf, size_t *size,
 					struct elfbac_data_transition *data_transition)
 {
-	if (parse_ulong(buf, size, &data_transition->to) != 0)
-		return -EINVAL;
 	if (parse_ulong(buf, size, &data_transition->from) != 0)
+		return -EINVAL;
+	if (parse_ulong(buf, size, &data_transition->to) != 0)
 		return -EINVAL;
 	if (parse_ulong(buf, size, &data_transition->base) != 0)
 		return -EINVAL;
@@ -71,9 +71,9 @@ static int elfbac_parse_data_transition(unsigned char **buf, size_t *size,
 static int elfbac_parse_call_transition(unsigned char **buf, size_t *size,
 					struct elfbac_call_transition *call_transition)
 {
-	if (parse_ulong(buf, size, &call_transition->to) != 0)
-		return -EINVAL;
 	if (parse_ulong(buf, size, &call_transition->from) != 0)
+		return -EINVAL;
+	if (parse_ulong(buf, size, &call_transition->to) != 0)
 		return -EINVAL;
 	if (parse_ulong(buf, size, &call_transition->addr) != 0)
 		return -EINVAL;
@@ -412,12 +412,13 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 
 	*next_state = NULL;
 
+	printk("Checking %x access at %x from state %d\n", mask, addr,
+	       policy->current_state->id);
+
 	// Common case, addr is allowed in current state
 	list_for_each_entry(section, &policy->current_state->sections_list, list) {
 		start = section->base;
 		end = start + section->size;
-
-		printk("Checking %08x in [%08x, %08x]\n", addr, start, end);
 
 		if (section->flags & mask && addr >= start && addr <= end)
 			return true;
@@ -434,8 +435,6 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				list_for_each_entry(section, &state->sections_list, list) {
 					start = section->base;
 					end = start + section->size;
-
-					printk("CALL Checking %08x in [%08x, %08x]\n", addr, start, end);
 
 					if (section->flags & mask && addr >= start && addr <= end) {
 						*next_state = state;
@@ -456,8 +455,6 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					start = section->base;
 					end = start + section->size;
 
-					printk("DATA Checking %08x in [%08x, %08x]\n", addr, start, end);
-
 					if (section->flags & mask && addr >= start && addr <= end) {
 						*next_state = state;
 						return true;
@@ -467,7 +464,6 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		}
 	}
 
-	printk("Returning false\n");
 	return false;
 }
 

@@ -26,15 +26,19 @@ def render_linker_script(policy, platform, policy_len):
     data = {
         'policy_len': policy_len,
         'text_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['flags'] == 'rx'] } for state in states],
+            for section in state['sections'] if section['flags'] == 'rx' and \
+                    section.get('create', True)] } for state in states],
         'rodata_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['flags'] == 'r'] } for state in states],
+            for section in state['sections'] if section['flags'] == 'r' and \
+                    section.get('create', True)] } for state in states],
         'data_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
             for section in state['sections'] if section['flags'] == 'rw' and \
-                    not is_bss(section['description'])] } for state in states],
+                    not is_bss(section['description']) and \
+                    section.get('create', True)] } for state in states],
         'bss_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
             for section in state['sections'] if section['flags'] == 'rw' and \
-                    is_bss(section['description'])] } for state in states],
+                    is_bss(section['description']) and \
+                    section.get('create', True)] } for state in states],
     }
 
     return renderer.render_name(platform, data)
@@ -70,10 +74,13 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
             flags |= (0x2 if 'w' in section['flags'] else 0)
             flags |= (0x4 if 'x' in section['flags'] else 0)
 
-            section_name = [None, '.rodata.', None, '.data.', None, '.text.', None, None][flags] + \
-                    state['name']
-            if section['flags'] == 'rw' and is_bss(section['description']):
-                section_name = '.bss.' + state['name']
+            if section.get('create', True):
+                section_name = [None, '.rodata.', None, '.data.', None, '.text.', None, None][flags] + \
+                        state['name']
+                if section['flags'] == 'rw' and is_bss(section['description']):
+                    section_name = '.bss.' + state['name']
+            else:
+                section_name = section['description']
 
             base, size = section_map.get(section_name, (0, 0))
             chunks.append(struct.pack('<IIII', SECTION, base, size, flags))
@@ -152,6 +159,8 @@ def main(argv=None):
         argv = sys.argv
 
     parser = argparse.ArgumentParser(description='Link a JSON ELFbac policy into a program')
+    parser.add_argument('-a', '--arch', metavar='ARCH', default='elf32-littlearm',
+            help='The target architecture for linker script generation, default is elf32-littlearm')
     parser.add_argument('-p', '--policy', metavar='POLICY', required=True,
             help='The JSON ELFbac policy to link into a program')
     parser.add_argument('-l', '--linker', metavar='LINKER', default='ld',
@@ -173,7 +182,7 @@ def main(argv=None):
             output_file = args.linker_args[i + 1]
 
     policy_len = len(generate_binary_policy(policy, {}, {}, False))
-    linker_script = render_linker_script(policy, 'elf32-littlearm', policy_len)
+    linker_script = render_linker_script(policy, args.arch, policy_len)
 
     with tempfile.NamedTemporaryFile('w') as f:
         if args.linker_args[0] == '--':
@@ -186,9 +195,6 @@ def main(argv=None):
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
         section_map, symbol_map = parse_link_map(link_map)
-
-        for name, (address, size) in section_map.iteritems():
-            print name, hex(address), hex(size)
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
     if os.path.exists(output_file):

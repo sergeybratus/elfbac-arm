@@ -276,16 +276,12 @@ good_area:
 			goto out;
 		}
 
-		printk("next_state: %p\n", next_state);
-
 		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 		if (fault != 0)
 			goto out;
 
-		if (next_state) {
-			printk("ELFBAC STATE TRANSITION\n");
+		if (next_state)
 			mm->elfbac_policy->current_state = next_state;
-		}
 
 		if (!mm->elfbac_policy->current_state->pgd) {
 			// TODO: See if this causes breakage
