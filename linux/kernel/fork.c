@@ -75,6 +75,7 @@
 #include <linux/aio.h>
 #include <linux/compiler.h>
 #include <linux/sysctl.h>
+#include <linux/elfbac.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -675,6 +676,10 @@ struct mm_struct *mm_alloc(void)
 void __mmdrop(struct mm_struct *mm)
 {
 	BUG_ON(mm == &init_mm);
+#ifdef CONFIG_ELFBAC
+	if (mm->elfbac_policy)
+		elfbac_policy_destroy(mm, mm->elfbac_policy);
+#endif
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	mmu_notifier_mm_destroy(mm);

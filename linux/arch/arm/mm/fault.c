@@ -19,18 +19,15 @@
 #include <linux/sched.h>
 #include <linux/highmem.h>
 #include <linux/perf_event.h>
+#include <linux/elfbac.h>
 
 #include <asm/exception.h>
 #include <asm/pgtable.h>
 #include <asm/system_misc.h>
 #include <asm/system_info.h>
 #include <asm/tlbflush.h>
-
-#ifdef CONFIG_ELFBAC
-#include <linux/elfbac.h>
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
-#endif
 
 #include "fault.h"
 

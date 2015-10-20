@@ -1,0 +1,40 @@
+{
+    "states": [
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "description": "*main.o(.text*)", "flags": "rx" },
+                { "description": "*main.o(.rodata*)", "flags": "r" },
+                { "description": "*main.o(.data*)", "flags": "rw" },
+                { "description": "*main.o(.bss*) *main.o(COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "libc",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*libc.o:(.text*)", "flags": "rx" },
+                { "description": "*libc.o:(.rodata*)", "flags": "r" },
+                { "description": "*libc.o:(.data*)", "flags": "rw" },
+                { "description": "*libc.o:(.bss*) *libc.o:(COMMON)", "flags": "rw" }
+            ]
+        }
+    ],
+    "call_transitions": [
+        {
+            "from": "start",
+            "to": "libc",
+            "address": "read",
+            "param_size": 12,
+            "return_size": 4
+        },
+        {
+            "from": "start",
+            "to": "libc",
+            "address": "write",
+            "param_size": 12,
+            "return_size": 4
+        }
+    ]
+}

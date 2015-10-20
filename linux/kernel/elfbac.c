@@ -144,7 +144,7 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 	return 0;
 }
 
-int elfbac_parse_policy(unsigned char *buf, size_t size,
+int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			struct elfbac_policy *out)
 {
 	enum {
@@ -261,7 +261,7 @@ int elfbac_parse_policy(unsigned char *buf, size_t size,
 	return 0;
 
 out:
-	elfbac_policy_destroy(out);
+	elfbac_policy_destroy(mm, out);
 	kfree(state);
 	kfree(section);
 	kfree(data_transition);
@@ -269,18 +269,19 @@ out:
 	return retval;
 }
 
-void elfbac_policy_destroy(struct elfbac_policy *policy)
+void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 {
 	struct elfbac_state *state, *nstate;
 	struct elfbac_section *section, *nsection;
 	struct elfbac_data_transition *data_transition, *ndata_transition;
 	struct elfbac_call_transition *call_transition, *ncall_transition;
 
-	// TODO: Destroy pgd's
+	printk("DESTROYING POLICY\n");
 	list_for_each_entry_safe(state, nstate, &policy->states_list, list) {
 		list_for_each_entry_safe(section, nsection, &state->sections_list, list)
 			kfree(section);
 
+		pgd_free(mm, state->pgd);
 		kfree(state);
 	}
 
@@ -291,7 +292,7 @@ void elfbac_policy_destroy(struct elfbac_policy *policy)
 		kfree(call_transition);
 }
 
-int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
+int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct elfbac_policy *new)
 {
 	int retval;
 
@@ -382,7 +383,7 @@ int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new)
 	return 0;
 
 out:
-	elfbac_policy_destroy(new);
+	elfbac_policy_destroy(mm, new);
 	kfree(new_state);
 	kfree(new_section);
 	kfree(new_data_transition);

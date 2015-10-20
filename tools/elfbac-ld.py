@@ -168,6 +168,8 @@ def main(argv=None):
     parser.add_argument('-c', '--use-compiler', action='store_true',
             help='If specified, using the C compiler driver to link the program, so modify '
                 'altered arguments appropriately')
+    parser.add_argument('-v', '--verbose', action='store_true',
+            help='If specified, provide verbose output')
     parser.add_argument('linker_args', metavar='LINKER ARGS', nargs=argparse.REMAINDER)
 
     args = parser.parse_args(argv[1:])
@@ -183,6 +185,8 @@ def main(argv=None):
 
     policy_len = len(generate_binary_policy(policy, {}, {}, False))
     linker_script = render_linker_script(policy, args.arch, policy_len)
+    if args.verbose:
+        print linker_script
 
     with tempfile.NamedTemporaryFile('w') as f:
         if args.linker_args[0] == '--':

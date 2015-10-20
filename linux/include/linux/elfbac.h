@@ -54,14 +54,15 @@ struct elfbac_policy {
 	struct elfbac_state *current_state;
 };
 
-int elfbac_parse_policy(unsigned char *buf, size_t size,
+int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 		struct elfbac_policy *policy);
-void elfbac_policy_destroy(struct elfbac_policy *policy);
-int elfbac_policy_clone(struct elfbac_policy *orig, struct elfbac_policy *new);
+void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy);
+int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig,
+		struct elfbac_policy *new);
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
-		      unsigned int mask, struct elfbac_state **next_state);
+		unsigned int mask, struct elfbac_state **next_state);
 int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
-			struct vm_area_struct *vma, unsigned long addr);
+		struct vm_area_struct *vma, unsigned long addr);
 
 #endif /* ! __LINUX_ELFBAC_H */
 

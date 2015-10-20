@@ -1120,7 +1120,8 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				goto out;
 			}
 
-			retval = elfbac_parse_policy(elfbac_policy_buffer,
+			retval = elfbac_parse_policy(current->mm,
+					elfbac_policy_buffer,
 					elf_ppnt->p_filesz,
 					current->mm->elfbac_policy);
 			kfree(elfbac_policy_buffer);
