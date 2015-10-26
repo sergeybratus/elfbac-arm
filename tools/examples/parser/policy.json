@@ -9,9 +9,7 @@
                 { "description": "*main.o(.data.parse_result)", "flags": "rw" },
                 { "description": "*crt*(.data*) *main.o(.data*)", "flags": "rw" },
                 { "description": "*crt*(.bss*) *crt*(COMMON) *main.o(.bss*) *main.o(COMMON)", "flags": "rw" },
-                { "description": "*libc.a:(.data*) *libgcc*:(.data*)", "flags": "rw" },
-                { "description": "*libc.a:(.bss*) *libgcc*:(.bss*) *libc.a:(COMMON) *libgcc*:(COMMON)", "flags": "rw" },
-                { "description": ".data.rel.ro", "flags": "rw", "create": false }
+                { "description": "*(.data.rel.ro)", "flags": "rw", "create": false }
             ]
         },
         {
@@ -22,19 +20,17 @@
                 { "description": "*parser.o(.rodata*)", "flags": "r" },
                 { "description": "*parser.o(.data*)", "flags": "rw" },
                 { "description": "*main.o(.data.parse_result)", "flags": "rw" },
-                { "description": "*parser.o(.bss*) *parser.o(COMMON)", "flags": "rw" },
-                { "description": ".data.rel.ro", "flags": "rw", "create": false }
+                { "description": "*parser.o(.bss*) *parser.o(COMMON)", "flags": "rw" }
             ]
         },
         {
             "name": "libc",
             "stack": "stack",
             "sections" : [
-                { "description": "*libc.a:(.text*) *libgcc*:(.text*)", "flags": "rx" },
-                { "description": "*libc.a:(.rodata*) *libgcc*:(.rodata*)", "flags": "r" },
-                { "description": "*libc.a:(.data*) *libgcc*:(.data*)", "flags": "rw" },
-                { "description": "*libc.a:(.bss*) *libgcc*:(.bss*) *libc.a:(COMMON) *libgcc*:(COMMON)", "flags": "rw" },
-                { "description": ".data.rel.ro", "flags": "rw", "create": false }
+                { "description": "*libc.a(.text*) *libgcc*(.text*)", "flags": "rx" },
+                { "description": "*libc.a(.rodata*) *libgcc*(.rodata*)", "flags": "r" },
+                { "description": "*libc.a(.data*) *libgcc*(.data*)", "flags": "rw" },
+                { "description": "*libc.a(.bss*) *libc.a(COMMON) *libgcc*(.text*) *libgcc*(COMMON)", "flags": "rw" }
             ]
         }
     ],

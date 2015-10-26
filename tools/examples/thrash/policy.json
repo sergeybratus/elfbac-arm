@@ -1,0 +1,67 @@
+{
+    "states": [
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "description": "*main.o(.text*)", "flags": "rx" },
+                { "description": "*main.o(.rodata*)", "flags": "r" },
+                { "description": "*main.o(.data*)", "flags": "rw" },
+                { "description": "*main.o(.bss*) *main.o(COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "read",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*read.o(.text*)", "flags": "rx" },
+                { "description": "*read.o(.rodata*)", "flags": "r" },
+                { "description": "*read.o(.data*)", "flags": "rw" },
+                { "description": "*read.o(.bss*) *read.o:(COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "write",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*write.o(.text*)", "flags": "rx" },
+                { "description": "*write.o(.rodata*)", "flags": "r" },
+                { "description": "*write.o(.data*)", "flags": "rw" },
+                { "description": "*write.o(.bss*) *write.o:(COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "exit",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*exit.o(.text*)", "flags": "rx" },
+                { "description": "*exit.o(.rodata*)", "flags": "r" },
+                { "description": "*exit.o(.data*)", "flags": "rw" },
+                { "description": "*exit.o(.bss*) *exit.o:(COMMON)", "flags": "rw" }
+            ]
+        }
+    ],
+    "call_transitions": [
+        {
+            "from": "start",
+            "to": "read",
+            "address": "read",
+            "param_size": 12,
+            "return_size": 4
+        },
+        {
+            "from": "start",
+            "to": "write",
+            "address": "write",
+            "param_size": 12,
+            "return_size": 4
+        },
+        {
+            "from": "start",
+            "to": "exit",
+            "address": "_exit",
+            "param_size": 12,
+            "return_size": 4
+        }
+    ]
+}

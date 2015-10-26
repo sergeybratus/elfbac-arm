@@ -1,6 +1,6 @@
 # elfbac-ld
 
-A wrapper over the GNU linker for generating and inserting ELFbac policies into
+A wrapper over the GNU linker for generating and embedding ELFbac policies into
 ELF binaries.
 
 ## Usage
@@ -42,7 +42,12 @@ be inserted into the generated linker script or if the section is pre-defined by
 the existing linker script, and defaults to true. Descriptions should match the
 syntax used for describing an input section in a GNU linker linker script,
 please refer to section 4.6.4 Input Section Description in the GNU linker manual
-for more information.
+for more information. This format makes placing symbols from separate object
+files into separate states easy, by specifying an object file name in the
+section descriptor to pull in all symbols from that object file into the parent
+state. To place symbols from the same object file in their own section, use the
+GCC `__attribute__((section(<name>)))` attribute for each symbol, and alter the
+section descriptions in the JSON policy accordingly.
 
 Call transitions are defined by a from and to state (state names as defined in
 the states list), address trigering the transition, size of all function
@@ -51,8 +56,9 @@ parameters and the size of the returned value.
 Data transitions are defined by a from and to state (state names as defined in
 the states list), flags denoting access restrictions, base address, and size.
 
-Please refer to the example policy JSON file for the exact structure required by
-the tool.
+Please refer to the example policy JSON files from the examples/ folder for the
+exact structure required by the tool and how to construct policies descriptions
+for new programs.
 
 ## Under the Hood
 

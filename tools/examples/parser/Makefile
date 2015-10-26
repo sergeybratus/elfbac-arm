@@ -8,7 +8,7 @@ parser_pol: $(OBJS) policy.json
 	../../elfbac-ld.py -v -c -l $(CC) -p policy.json -- -static $(OBJS) -o parser_pol
 
 parser_nopol: $(OBJS)
-	$(CC) -static $(OBJS) $(LIBS) -o parser_nopol
+	$(CC) -static $(OBJS) -o parser_nopol
 
 -include $(OBJS:.o=.d)
 
