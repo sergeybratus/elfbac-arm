@@ -14,6 +14,7 @@
             "name": "libc",
             "stack": "stack",
             "sections" : [
+                { "description": "*main.o(.data.buf)", "flags": "rw", "create": false },
                 { "description": "*libc.o(.text*)", "flags": "rx" },
                 { "description": "*libc.o(.rodata*)", "flags": "r" },
                 { "description": "*libc.o(.data*)", "flags": "rw" },
@@ -40,7 +41,7 @@
             "from": "start",
             "to": "libc",
             "address": "_exit",
-            "param_size": 12,
+            "param_size": 4,
             "return_size": 4
         }
     ]

@@ -40,7 +40,7 @@
             "from": "start",
             "to": "libc",
             "address": "_exit",
-            "param_size": 12,
+            "param_size": 4,
             "return_size": 4
         }
     ]
