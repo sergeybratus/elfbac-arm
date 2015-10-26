@@ -237,7 +237,7 @@ __do_page_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 		unsigned int flags, struct task_struct *tsk)
 {
 	struct vm_area_struct *vma;
-	int fault, is_stack = 0;
+	int fault;
 
 	vma = find_vma(mm, addr);
 	fault = VM_FAULT_BADMAP;
@@ -268,7 +268,8 @@ good_area:
 			mask = VM_EXEC;
 
 		fault = VM_FAULT_BADACCESS;
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) && !is_stack) {
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) &&
+		    !(vma->vm_flags & VM_GROWSDOWN)) {
 			printk("GOT ELFBAC POLICY VIOLATION\n");
 			goto out;
 		}
@@ -301,10 +302,8 @@ good_area:
 check_stack:
 	/* Don't allow expansion below FIRST_USER_ADDRESS */
 	if (vma->vm_flags & VM_GROWSDOWN &&
-	    addr >= FIRST_USER_ADDRESS && !expand_stack(vma, addr)) {
-		is_stack = 1;
+	    addr >= FIRST_USER_ADDRESS && !expand_stack(vma, addr))
 		goto good_area;
-	}
 out:
 	return fault;
 }
