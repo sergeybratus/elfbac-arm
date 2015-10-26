@@ -1,0 +1,4 @@
+simple_pol      192,115,158,280,305
+simple_nopol    26,28,26,25,25
+thrash_pol      147,243,350,416,230
+thrash_nopol    26,25,26,26,26
