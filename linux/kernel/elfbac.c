@@ -32,9 +32,6 @@ static int elfbac_parse_state(unsigned char **buf, size_t *size,
 	if (parse_ulong(buf, size, &state->stack_id) != 0)
 		return -EINVAL;
 
-	state->pgd = NULL;
-	memset(&state->context, 0, sizeof(mm_context_t));
-
 	return 0;
 }
 
@@ -188,7 +185,9 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 				goto out;
 
 			state->id = cur_state_id++;
+			state->return_state_id = UNDEFINED_STATE_ID;
 			state->pgd = NULL;
+			memset(&state->context, 0, sizeof(mm_context_t));
 			INIT_LIST_HEAD(&state->sections_list);
 			list_add_tail(&state->list, &out->states_list);
 			state = NULL;
@@ -316,6 +315,7 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct
 		memset(new_state, '\0', sizeof(struct elfbac_state));
 
 		new_state->id = state->id;
+		new_state->return_state_id = state->return_state_id;
 		INIT_LIST_HEAD(&new_state->list);
 		INIT_LIST_HEAD(&new_state->sections_list);
 		list_add_tail(&state->list, &new->states_list);
@@ -413,8 +413,8 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 
 	*next_state = NULL;
 
-	printk("Checking %x access at %x from state %d\n", mask, addr,
-	       policy->current_state->id);
+	printk("Checking %x access at %lx from state %ld, ret: %ld\n", mask, addr,
+	       policy->current_state->id, policy->current_state->return_state_id);
 
 	// Common case, addr is allowed in current state
 	list_for_each_entry(section, &policy->current_state->sections_list, list) {
@@ -425,6 +425,26 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 			return true;
 	}
 
+	// Check for return from a call transition
+	if ((mask & VM_EXEC) && policy->current_state->return_state_id != UNDEFINED_STATE_ID) {
+		state = get_state_by_id(policy, policy->current_state->return_state_id);
+		if (state) {
+			list_for_each_entry(section, &state->sections_list, list) {
+				start = section->base;
+				end = start + section->size;
+
+				if (section->flags & mask && addr >= start && addr <= end) {
+					policy->current_state->return_state_id = UNDEFINED_STATE_ID;
+					*next_state = state;
+					return true;
+				}
+			}
+		}
+	}
+
+	printk("Got normal transition\n");
+
+	// Check for normal state transitions (call and data)
 	if (mask & VM_EXEC) {
 		list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
 			if (call_transition->from == policy->current_state->id) {
@@ -438,6 +458,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					end = start + section->size;
 
 					if (section->flags & mask && addr >= start && addr <= end) {
+						state->return_state_id = policy->current_state->id;
 						*next_state = state;
 						return true;
 					}

@@ -14,10 +14,10 @@
             "name": "libc",
             "stack": "stack",
             "sections" : [
-                { "description": "*libc.o:(.text*)", "flags": "rx" },
-                { "description": "*libc.o:(.rodata*)", "flags": "r" },
-                { "description": "*libc.o:(.data*)", "flags": "rw" },
-                { "description": "*libc.o:(.bss*) *libc.o:(COMMON)", "flags": "rw" }
+                { "description": "*libc.o(.text*)", "flags": "rx" },
+                { "description": "*libc.o(.rodata*)", "flags": "r" },
+                { "description": "*libc.o(.data*)", "flags": "rw" },
+                { "description": "*libc.o(.bss*) *libc.o:(COMMON)", "flags": "rw" }
             ]
         }
     ],

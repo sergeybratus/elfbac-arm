@@ -12,9 +12,12 @@
 
 #define PT_ELFBAC_POLICY (PT_LOOS + 0xfe7fbac)
 
+#define UNDEFINED_STATE_ID (ULONG_MAX)
+
 struct elfbac_state {
 	unsigned long id;
 	unsigned long stack_id;
+	unsigned long return_state_id;
 	struct list_head list;
 	struct list_head sections_list;
 	pgd_t *pgd;
