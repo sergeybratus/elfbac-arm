@@ -79,12 +79,10 @@ SECTIONS
     .plt : { *(.plt) } :text-segment
     .iplt : { *(.iplt) } :text-segment
     {{#text_sections}}
-    {{#sections}}
     .text.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :text-segment
-    {{/sections}}
     {{/text_sections}}
     .text :
     {
@@ -105,12 +103,10 @@ SECTIONS
     PROVIDE (_etext = .);
     PROVIDE (etext = .);
     {{#rodata_sections}}
-    {{#sections}}
     .rodata.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :text-segment
-    {{/sections}}
     {{/rodata_sections}}
     .rodata : { *(.rodata .rodata.* .gnu.linkonce.r.*) } :text-segment
     .rodata1 : { *(.rodata1) } :text-segment
@@ -190,12 +186,10 @@ SECTIONS
     . = DATA_SEGMENT_RELRO_END (0, .);
     .got : { *(.got.plt) *(.igot.plt) *(.got) *(.igot) } :data-segment
     {{#data_sections}}
-    {{#sections}}
     .data.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :data-segment
-    {{/sections}}
     {{/data_sections}}
     .data :
     {
@@ -209,12 +203,10 @@ SECTIONS
     __bss_start = .;
     __bss_start__ = .;
     {{#bss_sections}}
-    {{#sections}}
     .bss.{{name}} ALIGN(4096) :
     {
         {{description}}
     } :data-segment
-    {{/sections}}
     {{/bss_sections}}
     .bss :
     {

@@ -23,22 +23,47 @@ def render_linker_script(policy, platform, policy_len):
     renderer = pystache.Renderer(search_dirs=[templates_dir])
 
     # Split up sections from all states so they end up in the right segment
+
+    text_sections = []
+    rodata_sections = []
+    data_sections = []
+    bss_sections = []
+
+    for state in states:
+        for section in state['sections']:
+            if not section.get('create', True):
+                continue
+
+            if section['flags'] == 'rx':
+                text_sections.append({
+                    'description': section['description'],
+                    'name': section.get('name', state['name'])
+                })
+
+            if section['flags'] == 'r':
+                rodata_sections.append({
+                    'description': section['description'],
+                    'name': section.get('name', state['name'])
+                })
+
+            if section['flags'] == 'rw' and not is_bss(section['description']):
+                data_sections.append({
+                    'description': section['description'],
+                    'name': section.get('name', state['name'])
+                })
+
+            if section['flags'] == 'rw' and is_bss(section['description']):
+                bss_sections.append({
+                    'description': section['description'],
+                    'name': section.get('name', state['name'])
+                })
+
     data = {
         'policy_len': policy_len,
-        'text_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['flags'] == 'rx' and \
-                    section.get('create', True)] } for state in states],
-        'rodata_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['flags'] == 'r' and \
-                    section.get('create', True)] } for state in states],
-        'data_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['flags'] == 'rw' and \
-                    not is_bss(section['description']) and \
-                    section.get('create', True)] } for state in states],
-        'bss_sections': [{ 'name': state['name'], 'sections': [{ 'description': section['description'] }
-            for section in state['sections'] if section['flags'] == 'rw' and \
-                    is_bss(section['description']) and \
-                    section.get('create', True)] } for state in states],
+        'text_sections': text_sections,
+        'rodata_sections': rodata_sections,
+        'data_sections': data_sections,
+        'bss_sections': bss_sections
     }
 
     return renderer.render_name(platform, data)

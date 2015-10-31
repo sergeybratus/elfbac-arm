@@ -180,13 +180,17 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			if (!state)
 				goto out;
 
+			state->pgd = pgd_alloc(mm);
+			if (!state->pgd)
+				goto out;
+
 			retval = elfbac_parse_state(&buf, &size, state);
 			if (retval != 0)
 				goto out;
 
 			state->id = cur_state_id++;
 			state->return_state_id = UNDEFINED_STATE_ID;
-			state->pgd = NULL;
+
 			memset(&state->context, 0, sizeof(mm_context_t));
 			INIT_LIST_HEAD(&state->sections_list);
 			list_add_tail(&state->list, &out->states_list);
@@ -242,6 +246,10 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			if (retval != 0)
 				goto out;
 
+			printk("Got transition from %ld to %ld on %08lx\n",
+			       call_transition->from, call_transition->to,
+			       call_transition->addr);
+
 			list_add_tail(&call_transition->list, &out->call_transitions_list);
 			call_transition = NULL;
 			break;
@@ -261,6 +269,10 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 
 out:
 	elfbac_policy_destroy(mm, out);
+
+	if (state && state->pgd)
+		pgd_free(mm, state->pgd);
+
 	kfree(state);
 	kfree(section);
 	kfree(data_transition);
@@ -275,7 +287,6 @@ void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 	struct elfbac_data_transition *data_transition, *ndata_transition;
 	struct elfbac_call_transition *call_transition, *ncall_transition;
 
-	printk("DESTROYING POLICY\n");
 	list_for_each_entry_safe(state, nstate, &policy->states_list, list) {
 		list_for_each_entry_safe(section, nsection, &state->sections_list, list)
 			kfree(section);
@@ -396,7 +407,7 @@ static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsign
 	struct elfbac_state *state;
 
 	list_for_each_entry(state, &policy->states_list, list)
-		if (id-- == 0)
+		if (id == 0)
 			return state;
 
 	return NULL;
@@ -413,8 +424,8 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 
 	*next_state = NULL;
 
-	printk("Checking %x access at %lx from state %ld, ret: %ld\n", mask, addr,
-	       policy->current_state->id, policy->current_state->return_state_id);
+	printk("GOT ELFBAC ACCESS: state: %ld, addr: %08lx, mask: %x\n",
+	       policy->current_state->id, addr, mask);
 
 	// Common case, addr is allowed in current state
 	list_for_each_entry(section, &policy->current_state->sections_list, list) {
@@ -441,8 +452,6 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 			}
 		}
 	}
-
-	printk("Got normal transition\n");
 
 	// Check for normal state transitions (call and data)
 	if (mask & VM_EXEC) {
@@ -485,6 +494,9 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 			}
 		}
 	}
+
+	printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
+	       policy->current_state->id, addr, mask);
 
 	return false;
 }

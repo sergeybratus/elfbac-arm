@@ -4,6 +4,7 @@
             "name": "start",
             "stack": "stack",
             "sections": [
+                { "name": "buf", "description": "*main.o(.data.buf)", "flags": "rw" },
                 { "description": "*main.o(.text*)", "flags": "rx" },
                 { "description": "*main.o(.rodata*)", "flags": "r" },
                 { "description": "*main.o(.data*)", "flags": "rw" },
@@ -14,6 +15,7 @@
             "name": "libc",
             "stack": "stack",
             "sections" : [
+                { "name": "buf", "create": false, "description": "*main.o(.data.buf)", "flags": "rw" },
                 { "description": "*libc.o(.text*)", "flags": "rx" },
                 { "description": "*libc.o(.rodata*)", "flags": "r" },
                 { "description": "*libc.o(.data*)", "flags": "rw" },

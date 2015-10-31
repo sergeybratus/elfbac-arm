@@ -1,5 +1,5 @@
 CC := arm-linux-gnueabihf-gcc
-CFLAGS := -O0
+CFLAGS := -O0 -marm
 OBJS := libc.o read.o write.o exit.o main.o
 LIBS := 
 
@@ -9,7 +9,7 @@ thrash_pol: $(OBJS) policy.json
 	../../elfbac-ld.py -v -c -l $(CC) -p policy.json -- -nostdlib -static $(OBJS) $(LIBS) -o thrash_pol
 
 thrash_nopol: $(OBJS)
-	$(CC) -nostdlib -static $(OBJS) $(LIBS) -o thrash_nopol -Wl,-verbose
+	$(CC) -nostdlib -static $(OBJS) $(LIBS) -o thrash_nopol
 
 -include $(OBJS:.o=.d)
 

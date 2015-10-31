@@ -1,15 +1,15 @@
 CC := arm-linux-gnueabihf-gcc
-CFLAGS := -O0
+CFLAGS := -O0 -marm
 OBJS := libc.o main.o
 LIBS := 
 
 all: loop_pol loop_nopol
 
 loop_pol: $(OBJS) policy.json
-	../../elfbac-ld.py -v -c -l $(CC) -p policy.json -- -nostdlib -static $(OBJS) $(LIBS) -o loop_pol
+	../../elfbac-ld.py -c -l $(CC) -p policy.json -- -nostdlib -static $(OBJS) $(LIBS) -o loop_pol
 
 loop_nopol: $(OBJS)
-	$(CC) -nostdlib -static $(OBJS) $(LIBS) -o loop_nopol -Wl,-verbose
+	$(CC) -nostdlib -static $(OBJS) $(LIBS) -o loop_nopol
 
 -include $(OBJS:.o=.d)
 

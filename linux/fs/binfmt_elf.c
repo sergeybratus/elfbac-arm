@@ -1088,46 +1088,49 @@ static int load_elf_binary(struct linux_binprm *bprm)
 	for (i = 0; i < loc->elf_ex.e_phnum; i++, elf_ppnt++) {
 		if (elf_ppnt->p_type == PT_ELFBAC_POLICY) {
 			unsigned char *elfbac_policy_buffer;
+			struct elfbac_policy *elfbac_policy;
+			size_t elfbac_policy_size = elf_ppnt->p_filesz;
 
 			retval = -ENOEXEC;
-			if (elf_ppnt->p_filesz > ELFBAC_POLICY_SIZE_MAX)
+			if (elfbac_policy_size > ELFBAC_POLICY_SIZE_MAX)
 				goto out;
 
 			retval = -ENOMEM;
-			elfbac_policy_buffer = kmalloc(elf_ppnt->p_filesz,
+			elfbac_policy_buffer = kmalloc(elfbac_policy_size,
 					GFP_KERNEL);
 
 			if (!elfbac_policy_buffer)
 				goto out;
 
-			current->mm->elfbac_policy = kmalloc(
-					sizeof(struct elfbac_policy),
+			elfbac_policy = kmalloc(sizeof(struct elfbac_policy),
 					GFP_KERNEL);
-			if (!current->mm->elfbac_policy) {
+			if (!elfbac_policy) {
 				kfree(elfbac_policy_buffer);
 				goto out;
 			}
 
 			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
 					elfbac_policy_buffer,
-					elf_ppnt->p_filesz);
+					elfbac_policy_size);
 
-			if (retval != elf_ppnt->p_filesz) {
+			if (retval != elfbac_policy_size) {
 				if (retval > 0)
 					retval = -EIO;
 				kfree(elfbac_policy_buffer);
-				kfree(current->mm->elfbac_policy);
+				kfree(elfbac_policy);
 				goto out;
 			}
 
 			retval = elfbac_parse_policy(current->mm,
 					elfbac_policy_buffer,
-					elf_ppnt->p_filesz,
-					current->mm->elfbac_policy);
+					elfbac_policy_size,
+					elfbac_policy);
 			kfree(elfbac_policy_buffer);
 
 			if (retval < 0)
 				goto out;
+
+			current->mm->elfbac_policy = elfbac_policy;
 		}
 	}
 #endif

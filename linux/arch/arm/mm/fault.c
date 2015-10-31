@@ -269,10 +269,8 @@ good_area:
 
 		fault = VM_FAULT_BADACCESS;
 		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) &&
-		    !(vma->vm_flags & VM_GROWSDOWN)) {
-			printk("GOT ELFBAC POLICY VIOLATION\n");
+		    !(vma->vm_flags & VM_GROWSDOWN))
 			goto out;
-		}
 
 		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 		if (fault != 0)
@@ -280,16 +278,6 @@ good_area:
 
 		if (next_state)
 			mm->elfbac_policy->current_state = next_state;
-
-		if (!mm->elfbac_policy->current_state->pgd) {
-			// TODO: See if this causes breakage
-			mm->elfbac_policy->current_state->pgd = pgd_alloc(mm);
-			if (!mm->elfbac_policy->current_state->pgd)
-				goto out;
-
-			// Can we re-use init_new_context here?
-			atomic64_set(&mm->elfbac_policy->current_state->context.id, 0);
-		}
 
 		return elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr);
 	} else {
