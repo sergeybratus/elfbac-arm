@@ -3,6 +3,7 @@
 
 #include <linux/elf.h>
 #include <linux/list.h>
+#include <linux/spinlock.h>
 
 #include <asm/mmu.h>
 
@@ -53,6 +54,7 @@ struct elfbac_policy {
 	struct list_head states_list;
 	struct list_head data_transitions_list;
 	struct list_head call_transitions_list;
+	spinlock_t lock;
 	unsigned long num_stacks;
 	struct elfbac_state *current_state;
 };

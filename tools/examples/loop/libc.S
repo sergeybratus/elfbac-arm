@@ -1,7 +1,6 @@
 /* Syscall wrappers from bionic */
 
 #include <asm/unistd.h> /* For system call numbers. */
-#define MAX_ERRNO 4095  /* For recognizing system call error returns. */
 
 #define __bionic_asm_align 0
 
@@ -38,10 +37,7 @@ ENTRY(read)
     ldr     r7, =__NR_read
     swi     #0
     mov     r7, ip
-    cmn     r0, #(MAX_ERRNO + 1)
-    bxls    lr
-    neg     r0, r0
-//    b       __set_errno_internal
+    bx      lr
 END(read)
 
 ENTRY(write)
@@ -49,10 +45,7 @@ ENTRY(write)
     ldr     r7, =__NR_write
     swi     #0
     mov     r7, ip
-    cmn     r0, #(MAX_ERRNO + 1)
-    bxls    lr
-    neg     r0, r0
-//    b       __set_errno_internal
+    bx      lr
 END(write)
 
 ENTRY(_exit)
@@ -60,10 +53,7 @@ ENTRY(_exit)
     ldr     r7, =__NR_exit_group
     swi     #0
     mov     r7, ip
-    cmn     r0, #(MAX_ERRNO + 1)
-    bxls    lr
-    neg     r0, r0
-//    b       __set_errno_internal
+    bx      lr
 END(_exit)
 
 ENTRY(__aeabi_unwind_cpp_pr0)

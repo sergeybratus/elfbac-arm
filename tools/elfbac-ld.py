@@ -72,7 +72,7 @@ def stable_unique(l):
     seen = set()
     return [x for x in l if not (x in seen or seen.add(x))]
 
-def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
+def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, verbose=False):
     STATE = 1
     SECTION = 2
     DATA_TRANSITION = 3
@@ -85,11 +85,17 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
     state_names = [s['name'] for s in states]
     stack_names = stable_unique([s['stack'] for s in states])
 
+    if verbose:
+        print '=' * 80
+
     # Pack num stacks
     chunks.append(struct.pack('<I', len(stack_names)))
 
     # Pack states
     for state in states:
+        if verbose:
+            print 'State %s:' % state['name']
+
         stack_id = stack_names.index(state['stack'])
         chunks.append(struct.pack('<II', STATE, stack_id))
 
@@ -99,15 +105,16 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
             flags |= (0x2 if 'w' in section['flags'] else 0)
             flags |= (0x4 if 'x' in section['flags'] else 0)
 
-            if section.get('create', True):
-                section_name = [None, '.rodata.', None, '.data.', None, '.text.', None, None][flags] + \
-                        state['name']
-                if section['flags'] == 'rw' and is_bss(section['description']):
-                    section_name = '.bss.' + state['name']
-            else:
-                section_name = section['description']
+            name = section.get('name', state['name'])
+            section_name = [None, '.rodata.', '.data', '.data.', None, '.text.', None, None][flags] + name
+            if section['flags'] == 'rw' and is_bss(section['description']):
+                section_name = '.bss.' + state['name']
 
             base, size = section_map.get(section_name, (0, 0))
+
+            if verbose:
+                print '\t%s: %08x->%08x, %x' % (section_name, base, base + size, flags)
+
             chunks.append(struct.pack('<IIII', SECTION, base, size, flags))
 
     # Pack data transitions
@@ -131,6 +138,10 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
         flags |= (0x2 if 'w' in transition ['flags'] else 0)
         flags |= (0x4 if 'x' in transition['flags'] else 0)
 
+        if verbose:
+            print 'Data Transition from %s->%s on %08x->%08x, %x' % (from_state, to_state,
+                base, base + size, flags)
+
         chunks.append(struct.pack('<IIIIII', DATA_TRANSITION, from_state, to_state,
             base, size, flags))
 
@@ -151,8 +162,15 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True):
         if must_resolve and not address:
             raise KeyError('Error resolving section %s' % section_name)
 
+        if verbose:
+            print 'Call Transition from %08x->%08x on %x,%x,%x' % (from_state, to_state,
+                    address, param_size, return_size)
+
         chunks.append(struct.pack('<IIIIII', CALL_TRANSITION, from_state, to_state,
             address, param_size, return_size))
+
+    if verbose:
+        print '=' * 80
 
     return b''.join(chunks)
 
@@ -236,7 +254,7 @@ def main(argv=None):
         assert(elfbac_section['sh_size'] == policy_len)
         offset = elfbac_section['sh_offset']
 
-        binary_pol = generate_binary_policy(policy, section_map, symbol_map)
+        binary_pol = generate_binary_policy(policy, section_map, symbol_map, True, args.verbose)
         new_contents = contents[:offset] + binary_pol + contents[offset + policy_len:]
  
         with open(output_file, 'wb') as f:

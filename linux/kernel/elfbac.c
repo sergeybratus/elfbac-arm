@@ -8,6 +8,7 @@
 #include <linux/resource.h>
 #include <linux/rmap.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
 #include <linux/uaccess.h>
@@ -97,6 +98,9 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 		num_states++;
 
 		list_for_each_entry(section, &state->sections_list, list) {
+			if (section->base + section->size < section->base)
+				return -EINVAL;
+
 			if (section->flags & VM_WRITE && !access_ok(VERIFY_WRITE,
 								      (void *)section->base,
 								      section->size))
@@ -117,6 +121,9 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 	list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
 		if (data_transition->from > num_states ||
 		    data_transition->to > num_states)
+			return -EINVAL;
+
+		if (data_transition->base + data_transition->size < data_transition->base)
 			return -EINVAL;
 
 		if (data_transition->flags & VM_WRITE && !access_ok(VERIFY_WRITE,
@@ -152,12 +159,16 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 	} type;
 
 	int retval;
+	unsigned long flags;
 	unsigned long cur_state_id = 0;
 
 	struct elfbac_state *state = NULL;
 	struct elfbac_section *section = NULL;
 	struct elfbac_data_transition *data_transition = NULL;
 	struct elfbac_call_transition *call_transition = NULL;
+
+	spin_lock_init(&out->lock);
+	spin_lock_irqsave(&out->lock, flags);
 
 	INIT_LIST_HEAD(&out->states_list);
 	INIT_LIST_HEAD(&out->data_transitions_list);
@@ -265,6 +276,7 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 	// TODO: Figure out stacks
 
 	out->current_state = list_entry(out->states_list.next, struct elfbac_state, list);
+	spin_unlock_irqrestore(&out->lock, flags);
 	return 0;
 
 out:
@@ -277,15 +289,21 @@ out:
 	kfree(section);
 	kfree(data_transition);
 	kfree(call_transition);
+
+	spin_unlock_irqrestore(&out->lock, flags);
+
 	return retval;
 }
 
 void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 {
+	unsigned long flags;
 	struct elfbac_state *state, *nstate;
 	struct elfbac_section *section, *nsection;
 	struct elfbac_data_transition *data_transition, *ndata_transition;
 	struct elfbac_call_transition *call_transition, *ncall_transition;
+
+	spin_lock_irqsave(&policy->lock, flags);
 
 	list_for_each_entry_safe(state, nstate, &policy->states_list, list) {
 		list_for_each_entry_safe(section, nsection, &state->sections_list, list)
@@ -300,16 +318,24 @@ void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 
 	list_for_each_entry_safe(call_transition, ncall_transition, &policy->call_transitions_list, list)
 		kfree(call_transition);
+
+	spin_unlock_irqrestore(&policy->lock, flags);
 }
 
 int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct elfbac_policy *new)
 {
 	int retval;
 
+	unsigned long flags;
 	struct elfbac_state *state, *new_state = NULL;
 	struct elfbac_section *section, *new_section = NULL;
 	struct elfbac_data_transition *data_transition, *new_data_transition = NULL;
 	struct elfbac_call_transition *call_transition, *new_call_transition = NULL;
+
+	spin_lock_irqsave(&orig->lock, flags);
+
+	spin_lock_init(&new->lock);
+	spin_lock(&new->lock);
 
 	new->num_stacks = orig->num_stacks;
 	INIT_LIST_HEAD(&new->states_list);
@@ -391,6 +417,9 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct
 		new_call_transition = NULL;
 	}
 
+	spin_unlock(&new->lock);
+	spin_unlock_irqrestore(&orig->lock, flags);
+
 	return 0;
 
 out:
@@ -399,6 +428,9 @@ out:
 	kfree(new_section);
 	kfree(new_data_transition);
 	kfree(new_call_transition);
+	spin_unlock(&new->lock);
+	spin_unlock_irqrestore(&orig->lock, flags);
+
 	return retval;
 }
 
@@ -407,7 +439,7 @@ static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsign
 	struct elfbac_state *state;
 
 	list_for_each_entry(state, &policy->states_list, list)
-		if (id == 0)
+		if (id-- == 0)
 			return state;
 
 	return NULL;
@@ -432,7 +464,10 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		start = section->base;
 		end = start + section->size;
 
-		if (section->flags & mask && addr >= start && addr <= end)
+		printk("Checking %lx in %ld with flags %x, %lx->%lx:%lx\n",
+		       addr, policy->current_state->id, mask, start, end, section->flags);
+
+		if ((section->flags & mask) && addr >= start && addr <= end)
 			return true;
 	}
 
@@ -444,7 +479,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				start = section->base;
 				end = start + section->size;
 
-				if (section->flags & mask && addr >= start && addr <= end) {
+				if ((section->flags & mask) && addr >= start && addr <= end) {
 					policy->current_state->return_state_id = UNDEFINED_STATE_ID;
 					*next_state = state;
 					return true;
@@ -462,34 +497,30 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				if (!state)
 					continue;
 
-				list_for_each_entry(section, &state->sections_list, list) {
-					start = section->base;
-					end = start + section->size;
-
-					if (section->flags & mask && addr >= start && addr <= end) {
-						state->return_state_id = policy->current_state->id;
-						*next_state = state;
-						return true;
-					}
+				if (call_transition->addr == addr) {
+					printk("SUCCESSFUL CALL TRANSITION: %ld -> %ld\n",
+					       call_transition->from,
+					       call_transition->to);
+					state->return_state_id = policy->current_state->id;
+					*next_state = state;
+					return true;
 				}
 			}
 		}
 	} else {
 		list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
 			if (data_transition->from == policy->current_state->id) {
+				start = data_transition->base;
+				end = start + data_transition->size;
+
 				state = get_state_by_id(policy, data_transition->to);
 
 				if (!state)
 					continue;
 
-				list_for_each_entry(section, &state->sections_list, list) {
-					start = section->base;
-					end = start + section->size;
-
-					if (section->flags & mask && addr >= start && addr <= end) {
-						*next_state = state;
-						return true;
-					}
+				if ((data_transition->flags & mask) && addr >= start && addr <= end) {
+					*next_state = state;
+					return true;
 				}
 			}
 		}
@@ -720,9 +751,11 @@ static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
 int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 			struct vm_area_struct *vma, unsigned long addr)
 {
+	unsigned long start, end;
+
 	pgd_t *dst_pgd = policy->current_state->pgd + pgd_index(addr);
-	unsigned long start = rounddown(addr, PAGE_SIZE);
-	unsigned long end = roundup(addr, PAGE_SIZE);
+	start = rounddown(addr, PAGE_SIZE);
+	end = roundup(addr, PAGE_SIZE);
 
 	if (start == end)
 		end += PAGE_SIZE;

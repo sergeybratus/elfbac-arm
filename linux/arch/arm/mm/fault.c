@@ -258,28 +258,46 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
+		unsigned long sflags;
 		struct elfbac_state *next_state;
 
 		/* From access_error above */
 		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
+
+		printk("PAGE FAULT addr: %lx, fsr: %x, flags: %x\n", addr, fsr, flags);
+
 		if (fsr & FSR_WRITE)
 			mask = VM_WRITE;
 		if (fsr & FSR_LNX_PF)
 			mask = VM_EXEC;
 
 		fault = VM_FAULT_BADACCESS;
+
+		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
+
 		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) &&
-		    !(vma->vm_flags & VM_GROWSDOWN))
+		    !(vma->vm_flags & VM_GROWSDOWN)) {
+			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 			goto out;
+		}
+
+		if (next_state) {
+			mm->elfbac_policy->current_state = next_state;
+			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+			return 0;
+		}
 
 		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
-		if (fault != 0)
+		if (fault != 0) {
+			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 			goto out;
+		}
 
-		if (next_state)
-			mm->elfbac_policy->current_state = next_state;
+		printk("Doing ELFBAC copy\n");
 
-		return elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr);
+		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr);
+		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+		goto out;
 	} else {
 		return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 	}

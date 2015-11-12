@@ -6,7 +6,7 @@ LIBS :=
 all: loop_pol loop_nopol
 
 loop_pol: $(OBJS) policy.json
-	../../elfbac-ld.py -c -l $(CC) -p policy.json -- -nostdlib -static $(OBJS) $(LIBS) -o loop_pol
+	../../elfbac-ld.py -c -l $(CC) -p policy.json -v -- -nostdlib -static $(OBJS) $(LIBS) -o loop_pol
 
 loop_nopol: $(OBJS)
 	$(CC) -nostdlib -static $(OBJS) $(LIBS) -o loop_nopol
