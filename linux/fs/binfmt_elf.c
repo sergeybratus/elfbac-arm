@@ -36,6 +36,7 @@
 #include <linux/coredump.h>
 #include <linux/sched.h>
 #include <linux/elfbac.h>
+#include <asm/mmu_context.h>
 #include <asm/uaccess.h>
 #include <asm/param.h>
 #include <asm/page.h>
@@ -1131,6 +1132,10 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				goto out;
 
 			current->mm->elfbac_policy = elfbac_policy;
+
+			// Ensure we've switched to state 0's page tables, the
+			// NULL prev is a hack but doesn't affect ARM adversely
+			switch_mm(NULL, current->mm, current);
 		}
 	}
 #endif

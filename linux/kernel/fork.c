@@ -923,6 +923,21 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 	if (!mm_init(mm, tsk))
 		goto fail_nomem;
 
+#ifdef CONFIG_ELFBAC
+	if (oldmm->elfbac_policy) {
+		err = -ENOMEM;
+		mm->elfbac_policy = kmalloc(sizeof(struct elfbac_policy), GFP_KERNEL);
+		if (!mm->elfbac_policy)
+			goto free_pt;
+
+		err = elfbac_policy_clone(mm, oldmm->elfbac_policy, mm->elfbac_policy);
+		if (err) {
+			kfree(mm->elfbac_policy);
+			goto free_pt;
+		}
+	}
+#endif
+
 	err = dup_mmap(mm, oldmm);
 	if (err)
 		goto free_pt;
