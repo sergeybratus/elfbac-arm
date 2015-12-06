@@ -30,7 +30,7 @@ work.
     make
     cd ../scripts
     ./make-vm.sh
-    cd ../elfbac-tools
+    cd ../tools
     mkdir venv
     virtualenv --no-site-packages venv
     source venv/bin/activate
