@@ -676,10 +676,6 @@ struct mm_struct *mm_alloc(void)
 void __mmdrop(struct mm_struct *mm)
 {
 	BUG_ON(mm == &init_mm);
-#ifdef CONFIG_ELFBAC
-	if (mm->elfbac_policy)
-		elfbac_policy_destroy(mm, mm->elfbac_policy);
-#endif
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	mmu_notifier_mm_destroy(mm);
@@ -700,6 +696,10 @@ void mmput(struct mm_struct *mm)
 		exit_aio(mm);
 		ksm_exit(mm);
 		khugepaged_exit(mm); /* must run before exit_mmap */
+#ifdef CONFIG_ELFBAC
+	if (mm->elfbac_policy)
+		elfbac_policy_destroy(mm, mm->elfbac_policy);
+#endif
 		exit_mmap(mm);
 		set_mm_exe_file(mm, NULL);
 		if (!list_empty(&mm->mmlist)) {

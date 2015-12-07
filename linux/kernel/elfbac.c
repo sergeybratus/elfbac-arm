@@ -1,6 +1,7 @@
 #include <asm/mmu_context.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
+#include <asm/tlb.h>
 
 #include <linux/list.h>
 #include <linux/mm.h>
@@ -14,6 +15,384 @@
 #include <linux/uaccess.h>
 
 #include <linux/elfbac.h>
+
+/* Modified routines from mm/memory.c
+ * TODO: Potentially factor out common code to reduce duplication
+ * TODO: Hugepages support
+ */
+static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
+		pte_t *dst_pte, pte_t *src_pte, struct vm_area_struct *vma,
+		unsigned long addr)
+{
+	pte_t pte = *src_pte;
+	struct page *page;
+
+	/* pte contains position in file, so copy. */
+	if (unlikely(!pte_present(pte))) {
+		swp_entry_t entry = pte_to_swp_entry(pte);
+
+		if (likely(!non_swap_entry(entry))) {
+			if (swap_duplicate(entry) < 0)
+				return entry.val;
+		} else if (is_migration_entry(entry)) {
+			page = migration_entry_to_page(entry);
+		}
+		goto out_set_pte;
+	}
+
+	page = vm_normal_page(vma, addr, pte);
+	if (page) {
+		get_page(page);
+		page_dup_rmap(page);
+	}
+
+out_set_pte:
+	set_pte_at(mm, addr, dst_pte, pte);
+	return 0;
+}
+
+static int elfbac_copy_pte_range(struct mm_struct *mm, pmd_t *dst_pmd,
+		pmd_t *src_pmd, struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pte_t *orig_src_pte, *orig_dst_pte;
+	pte_t *src_pte, *dst_pte;
+	spinlock_t *dst_ptl;
+	int progress = 0;
+	swp_entry_t entry = (swp_entry_t){0};
+
+again:
+	dst_pte = pte_alloc_map_lock(mm, dst_pmd, addr, &dst_ptl);
+	if (!dst_pte)
+		return -ENOMEM;
+	src_pte = pte_offset_map(src_pmd, addr);
+	orig_src_pte = src_pte;
+	orig_dst_pte = dst_pte;
+	arch_enter_lazy_mmu_mode();
+
+	do {
+		if (pte_none(*src_pte)) {
+			progress++;
+			continue;
+		}
+		entry.val = elfbac_copy_one_pte(mm, dst_pte, src_pte,
+							vma, addr);
+		if (entry.val)
+			break;
+		progress += 8;
+	} while (dst_pte++, src_pte++, addr += PAGE_SIZE, addr != end);
+
+	arch_leave_lazy_mmu_mode();
+	pte_unmap(orig_src_pte);
+	pte_unmap_unlock(orig_dst_pte, dst_ptl);
+	cond_resched();
+
+	if (entry.val) {
+		if (add_swap_count_continuation(entry, GFP_KERNEL) < 0)
+			return -ENOMEM;
+		progress = 0;
+	}
+
+	if (addr != end)
+		goto again;
+	return 0;
+}
+
+static inline int elfbac_copy_pmd_range(struct mm_struct *mm, pud_t *dst_pud,
+		pud_t *src_pud, struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pmd_t *src_pmd, *dst_pmd;
+	unsigned long next;
+
+	dst_pmd = pmd_alloc(mm, dst_pud, addr);
+	if (!dst_pmd)
+		return -ENOMEM;
+	src_pmd = pmd_offset(src_pud, addr);
+	do {
+		next = pmd_addr_end(addr, end);
+//		if (pmd_trans_huge(*src_pmd)) {
+//			int err;
+//			VM_BUG_ON(next-addr != HPAGE_PMD_SIZE);
+//			err = copy_huge_pmd(mm, src_mm,
+//					    dst_pmd, src_pmd, addr, vma);
+//			if (err == -ENOMEM)
+//				return -ENOMEM;
+//			if (!err)
+//				continue;
+//			/* fall through */
+//		}
+		if (pmd_none_or_clear_bad(src_pmd))
+			continue;
+		if (elfbac_copy_pte_range(mm, dst_pmd, src_pmd,
+						vma, addr, next))
+			return -ENOMEM;
+	} while (dst_pmd++, src_pmd++, addr = next, addr != end);
+	return 0;
+}
+
+static inline int elfbac_copy_pud_range(struct mm_struct *mm, pgd_t *dst_pgd,
+		pgd_t *src_pgd, struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pud_t *src_pud, *dst_pud;
+	unsigned long next;
+
+	dst_pud = pud_alloc(mm, dst_pgd, addr);
+	if (!dst_pud)
+		return -ENOMEM;
+	src_pud = pud_offset(src_pgd, addr);
+	do {
+		next = pud_addr_end(addr, end);
+		if (pud_none_or_clear_bad(src_pud))
+			continue;
+		if (elfbac_copy_pmd_range(mm, dst_pud, src_pud,
+						vma, addr, next))
+			return -ENOMEM;
+	} while (dst_pud++, src_pud++, addr = next, addr != end);
+	return 0;
+}
+
+static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
+		struct vm_area_struct *vma, unsigned long addr,
+		unsigned long end)
+{
+	pgd_t *src_pgd = mm->pgd;
+	unsigned long next;
+	int ret;
+
+	if (vma->vm_start > addr || end > vma->vm_end)
+		return -EINVAL;
+
+	/*
+	 * Don't copy ptes where a page fault will fill them correctly.
+	 * Fork becomes much lighter when there are big shared or private
+	 * readonly mappings. The tradeoff is that copy_page_range is more
+	 * efficient than faulting.
+	 */
+//	if (!(vma->vm_flags & (VM_HUGETLB | VM_PFNMAP | VM_MIXEDMAP)) &&
+//			!vma->anon_vma)
+//		return 0;
+
+//	if (is_vm_hugetlb_page(vma))
+//		return copy_hugetlb_page_range(mm, src_mm, vma);
+
+	if (unlikely(vma->vm_flags & VM_PFNMAP)) {
+		/*
+		 * We do not free on error cases below as remove_vma
+		 * gets called on error from higher level routine
+		 */
+		ret = track_pfn_copy(vma);
+		if (ret)
+			return ret;
+	}
+
+	ret = 0;
+	src_pgd = pgd_offset(mm, addr);
+	do {
+		next = pgd_addr_end(addr, end);
+		if (pgd_none_or_clear_bad(src_pgd))
+			continue;
+		if (unlikely(elfbac_copy_pud_range(mm, dst_pgd, src_pgd,
+					    vma, addr, next))) {
+			ret = -ENOMEM;
+			break;
+		}
+	} while (dst_pgd++, src_pgd++, addr = next, addr != end);
+
+	return ret;
+}
+
+int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
+			struct vm_area_struct *vma, unsigned long addr)
+{
+	unsigned long start, end;
+
+	pgd_t *dst_pgd = policy->current_state->pgd + pgd_index(addr);
+	start = rounddown(addr, PAGE_SIZE);
+	end = roundup(addr, PAGE_SIZE);
+
+	if (start == end)
+		end += PAGE_SIZE;
+
+	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end);
+}
+
+/*
+ * Note: this doesn't free the actual pages themselves. That
+ * has been handled earlier when unmapping all the memory regions.
+ */
+static void elfbac_free_pte_range(struct mmu_gather *tlb, pmd_t *pmd,
+			   unsigned long addr)
+{
+	pgtable_t token = pmd_pgtable(*pmd);
+	pmd_clear(pmd);
+	pte_free_tlb(tlb, token, addr);
+	atomic_long_dec(&tlb->mm->nr_ptes);
+}
+
+static inline void elfbac_free_pmd_range(struct mmu_gather *tlb, pud_t *pud,
+				unsigned long addr, unsigned long end,
+				unsigned long floor, unsigned long ceiling)
+{
+	pmd_t *pmd;
+	unsigned long next;
+	unsigned long start;
+
+	start = addr;
+	pmd = pmd_offset(pud, addr);
+	do {
+		next = pmd_addr_end(addr, end);
+		if (pmd_none_or_clear_bad(pmd))
+			continue;
+		elfbac_free_pte_range(tlb, pmd, addr);
+	} while (pmd++, addr = next, addr != end);
+
+	start &= PUD_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PUD_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		return;
+
+	pmd = pmd_offset(pud, start);
+	pud_clear(pud);
+	pmd_free_tlb(tlb, pmd, start);
+	mm_dec_nr_pmds(tlb->mm);
+}
+
+static inline void elfbac_free_pud_range(struct mmu_gather *tlb, pgd_t *pgd,
+				unsigned long addr, unsigned long end,
+				unsigned long floor, unsigned long ceiling)
+{
+	pud_t *pud;
+	unsigned long next;
+	unsigned long start;
+
+	start = addr;
+	pud = pud_offset(pgd, addr);
+	do {
+		next = pud_addr_end(addr, end);
+		if (pud_none_or_clear_bad(pud))
+			continue;
+		elfbac_free_pmd_range(tlb, pud, addr, next, floor, ceiling);
+	} while (pud++, addr = next, addr != end);
+
+	start &= PGDIR_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PGDIR_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		return;
+
+	pud = pud_offset(pgd, start);
+	pgd_clear(pgd);
+	pud_free_tlb(tlb, pud, start);
+}
+
+/*
+ * This function frees user-level page tables of a process.
+ */
+void elfbac_free_pgd_range(struct mmu_gather *tlb, pgd_t *pgd,
+			unsigned long addr, unsigned long end,
+			unsigned long floor, unsigned long ceiling)
+{
+	unsigned long next;
+
+	/*
+	 * The next few lines have given us lots of grief...
+	 *
+	 * Why are we testing PMD* at this top level?  Because often
+	 * there will be no work to do at all, and we'd prefer not to
+	 * go all the way down to the bottom just to discover that.
+	 *
+	 * Why all these "- 1"s?  Because 0 represents both the bottom
+	 * of the address space and the top of it (using -1 for the
+	 * top wouldn't help much: the masks would do the wrong thing).
+	 * The rule is that addr 0 and floor 0 refer to the bottom of
+	 * the address space, but end 0 and ceiling 0 refer to the top
+	 * Comparisons need to use "end - 1" and "ceiling - 1" (though
+	 * that end 0 case should be mythical).
+	 *
+	 * Wherever addr is brought up or ceiling brought down, we must
+	 * be careful to reject "the opposite 0" before it confuses the
+	 * subsequent tests.  But what about where end is brought down
+	 * by PMD_SIZE below? no, end can't go down to 0 there.
+	 *
+	 * Whereas we round start (addr) and ceiling down, by different
+	 * masks at different levels, in order to test whether a table
+	 * now has no other vmas using it, so can be freed, we don't
+	 * bother to round floor or end up - the tests don't need that.
+	 */
+
+	addr &= PMD_MASK;
+	if (addr < floor) {
+		addr += PMD_SIZE;
+		if (!addr)
+			return;
+	}
+	if (ceiling) {
+		ceiling &= PMD_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
+		end -= PMD_SIZE;
+	if (addr > end - 1)
+		return;
+
+	pgd += pgd_index(addr);
+	do {
+		next = pgd_addr_end(addr, end);
+		if (pgd_none_or_clear_bad(pgd))
+			continue;
+		elfbac_free_pud_range(tlb, pgd, addr, next, floor, ceiling);
+	} while (pgd++, addr = next, addr != end);
+}
+
+static void elfbac_free_pgtables(struct mmu_gather *tlb, pgd_t *pgd,
+				 struct vm_area_struct *vma,
+				 unsigned long floor, unsigned long ceiling)
+{
+	while (vma) {
+		struct vm_area_struct *next = vma->vm_next;
+		unsigned long addr = vma->vm_start;
+
+		/*
+		 * Hide vma from rmap and truncate_pagecache before freeing
+		 * pgtables
+		 */
+		unlink_anon_vmas(vma);
+		unlink_file_vma(vma);
+
+//		if (is_vm_hugetlb_page(vma)) {
+//			hugetlb_free_pgd_range(tlb, addr, vma->vm_end,
+//				floor, next? next->vm_start: ceiling);
+//		} else {
+			/*
+			 * Optimization: gather nearby vmas into one call down
+			 */
+			while (next && next->vm_start <= vma->vm_end + PMD_SIZE
+			       && !is_vm_hugetlb_page(next)) {
+				vma = next;
+				next = vma->vm_next;
+				unlink_anon_vmas(vma);
+				unlink_file_vma(vma);
+			}
+			elfbac_free_pgd_range(tlb, pgd, addr, vma->vm_end,
+				floor, next? next->vm_start: ceiling);
+//		}
+		vma = next;
+	}
+}
 
 static int parse_ulong(unsigned char **buf, size_t *size, unsigned long *out)
 {
@@ -302,12 +681,18 @@ void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 	struct elfbac_section *section, *nsection;
 	struct elfbac_data_transition *data_transition, *ndata_transition;
 	struct elfbac_call_transition *call_transition, *ncall_transition;
+	struct mmu_gather tlb;
 
 	spin_lock_irqsave(&policy->lock, flags);
 
 	list_for_each_entry_safe(state, nstate, &policy->states_list, list) {
 		list_for_each_entry_safe(section, nsection, &state->sections_list, list)
 			kfree(section);
+
+		tlb_gather_mmu(&tlb, mm, 0, -1);
+		elfbac_free_pgtables(&tlb, state->pgd, mm->mmap,
+				     FIRST_USER_ADDRESS, USER_PGTABLES_CEILING);
+		tlb_finish_mmu(&tlb, 0, -1);
 
 		pgd_free(mm, state->pgd);
 		kfree(state);
@@ -530,236 +915,5 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	       policy->current_state->id, addr, mask);
 
 	return false;
-}
-
-/* Modified routines from mm/memory.c
- * TODO: Potentially factor out common code to reduce duplication
- * TODO: Hugepages support
- */
-static inline void init_rss_vec(int *rss)
-{
-	memset(rss, 0, sizeof(int) * NR_MM_COUNTERS);
-}
-
-static inline void add_mm_rss_vec(struct mm_struct *mm, int *rss)
-{
-	int i;
-
-	if (current->mm == mm)
-		sync_mm_rss(mm);
-	for (i = 0; i < NR_MM_COUNTERS; i++)
-		if (rss[i])
-			add_mm_counter(mm, i, rss[i]);
-}
-
-static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
-		pte_t *dst_pte, pte_t *src_pte, struct vm_area_struct *vma,
-		unsigned long addr, int *rss)
-{
-	pte_t pte = *src_pte;
-	struct page *page;
-
-	/* pte contains position in file, so copy. */
-	if (unlikely(!pte_present(pte))) {
-		swp_entry_t entry = pte_to_swp_entry(pte);
-
-		if (likely(!non_swap_entry(entry))) {
-			if (swap_duplicate(entry) < 0)
-				return entry.val;
-		} else if (is_migration_entry(entry)) {
-			page = migration_entry_to_page(entry);
-
-			if (PageAnon(page))
-				rss[MM_ANONPAGES]++;
-			else
-				rss[MM_FILEPAGES]++;
-		}
-		goto out_set_pte;
-	}
-
-	page = vm_normal_page(vma, addr, pte);
-	if (page) {
-		get_page(page);
-		page_dup_rmap(page);
-		if (PageAnon(page))
-			rss[MM_ANONPAGES]++;
-		else
-			rss[MM_FILEPAGES]++;
-	}
-
-out_set_pte:
-	set_pte_at(mm, addr, dst_pte, pte);
-	return 0;
-}
-
-static int elfbac_copy_pte_range(struct mm_struct *mm, pmd_t *dst_pmd,
-		pmd_t *src_pmd, struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
-{
-	pte_t *orig_src_pte, *orig_dst_pte;
-	pte_t *src_pte, *dst_pte;
-	spinlock_t *dst_ptl;
-	int progress = 0;
-	int rss[NR_MM_COUNTERS];
-	swp_entry_t entry = (swp_entry_t){0};
-
-again:
-	init_rss_vec(rss);
-
-	dst_pte = pte_alloc_map_lock(mm, dst_pmd, addr, &dst_ptl);
-	if (!dst_pte)
-		return -ENOMEM;
-	src_pte = pte_offset_map(src_pmd, addr);
-	orig_src_pte = src_pte;
-	orig_dst_pte = dst_pte;
-	arch_enter_lazy_mmu_mode();
-
-	do {
-		if (pte_none(*src_pte)) {
-			progress++;
-			continue;
-		}
-		entry.val = elfbac_copy_one_pte(mm, dst_pte, src_pte,
-							vma, addr, rss);
-		if (entry.val)
-			break;
-		progress += 8;
-	} while (dst_pte++, src_pte++, addr += PAGE_SIZE, addr != end);
-
-	arch_leave_lazy_mmu_mode();
-	pte_unmap(orig_src_pte);
-	add_mm_rss_vec(mm, rss);
-	pte_unmap_unlock(orig_dst_pte, dst_ptl);
-	cond_resched();
-
-	if (entry.val) {
-		if (add_swap_count_continuation(entry, GFP_KERNEL) < 0)
-			return -ENOMEM;
-		progress = 0;
-	}
-
-	if (addr != end)
-		goto again;
-	return 0;
-}
-
-static inline int elfbac_copy_pmd_range(struct mm_struct *mm, pud_t *dst_pud,
-		pud_t *src_pud, struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
-{
-	pmd_t *src_pmd, *dst_pmd;
-	unsigned long next;
-
-	dst_pmd = pmd_alloc(mm, dst_pud, addr);
-	if (!dst_pmd)
-		return -ENOMEM;
-	src_pmd = pmd_offset(src_pud, addr);
-	do {
-		next = pmd_addr_end(addr, end);
-//		if (pmd_trans_huge(*src_pmd)) {
-//			int err;
-//			VM_BUG_ON(next-addr != HPAGE_PMD_SIZE);
-//			err = copy_huge_pmd(mm, src_mm,
-//					    dst_pmd, src_pmd, addr, vma);
-//			if (err == -ENOMEM)
-//				return -ENOMEM;
-//			if (!err)
-//				continue;
-//			/* fall through */
-//		}
-		if (pmd_none_or_clear_bad(src_pmd))
-			continue;
-		if (elfbac_copy_pte_range(mm, dst_pmd, src_pmd,
-						vma, addr, next))
-			return -ENOMEM;
-	} while (dst_pmd++, src_pmd++, addr = next, addr != end);
-	return 0;
-}
-
-static inline int elfbac_copy_pud_range(struct mm_struct *mm, pgd_t *dst_pgd,
-		pgd_t *src_pgd, struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
-{
-	pud_t *src_pud, *dst_pud;
-	unsigned long next;
-
-	dst_pud = pud_alloc(mm, dst_pgd, addr);
-	if (!dst_pud)
-		return -ENOMEM;
-	src_pud = pud_offset(src_pgd, addr);
-	do {
-		next = pud_addr_end(addr, end);
-		if (pud_none_or_clear_bad(src_pud))
-			continue;
-		if (elfbac_copy_pmd_range(mm, dst_pud, src_pud,
-						vma, addr, next))
-			return -ENOMEM;
-	} while (dst_pud++, src_pud++, addr = next, addr != end);
-	return 0;
-}
-
-static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
-		struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
-{
-	pgd_t *src_pgd = mm->pgd;
-	unsigned long next;
-	int ret;
-
-	if (vma->vm_start > addr || end > vma->vm_end)
-		return -EINVAL;
-
-	/*
-	 * Don't copy ptes where a page fault will fill them correctly.
-	 * Fork becomes much lighter when there are big shared or private
-	 * readonly mappings. The tradeoff is that copy_page_range is more
-	 * efficient than faulting.
-	 */
-//	if (!(vma->vm_flags & (VM_HUGETLB | VM_PFNMAP | VM_MIXEDMAP)) &&
-//			!vma->anon_vma)
-//		return 0;
-
-//	if (is_vm_hugetlb_page(vma))
-//		return copy_hugetlb_page_range(mm, src_mm, vma);
-
-	if (unlikely(vma->vm_flags & VM_PFNMAP)) {
-		/*
-		 * We do not free on error cases below as remove_vma
-		 * gets called on error from higher level routine
-		 */
-		ret = track_pfn_copy(vma);
-		if (ret)
-			return ret;
-	}
-
-	ret = 0;
-	src_pgd = pgd_offset(mm, addr);
-	do {
-		next = pgd_addr_end(addr, end);
-		if (pgd_none_or_clear_bad(src_pgd))
-			continue;
-		if (unlikely(elfbac_copy_pud_range(mm, dst_pgd, src_pgd,
-					    vma, addr, next))) {
-			ret = -ENOMEM;
-			break;
-		}
-	} while (dst_pgd++, src_pgd++, addr = next, addr != end);
-
-	return ret;
-}
-
-int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
-			struct vm_area_struct *vma, unsigned long addr)
-{
-	unsigned long start, end;
-
-	pgd_t *dst_pgd = policy->current_state->pgd + pgd_index(addr);
-	start = rounddown(addr, PAGE_SIZE);
-	end = roundup(addr, PAGE_SIZE);
-
-	if (start == end)
-		end += PAGE_SIZE;
-
-	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end);
 }
 
