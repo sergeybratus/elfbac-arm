@@ -370,8 +370,8 @@ static void elfbac_free_pgtables(struct mmu_gather *tlb, pgd_t *pgd,
 		 * Hide vma from rmap and truncate_pagecache before freeing
 		 * pgtables
 		 */
-		unlink_anon_vmas(vma);
-		unlink_file_vma(vma);
+//		unlink_anon_vmas(vma);
+//		unlink_file_vma(vma);
 
 //		if (is_vm_hugetlb_page(vma)) {
 //			hugetlb_free_pgd_range(tlb, addr, vma->vm_end,
@@ -384,8 +384,8 @@ static void elfbac_free_pgtables(struct mmu_gather *tlb, pgd_t *pgd,
 			       && !is_vm_hugetlb_page(next)) {
 				vma = next;
 				next = vma->vm_next;
-				unlink_anon_vmas(vma);
-				unlink_file_vma(vma);
+//				unlink_anon_vmas(vma);
+//				unlink_file_vma(vma);
 			}
 			elfbac_free_pgd_range(tlb, pgd, addr, vma->vm_end,
 				floor, next? next->vm_start: ceiling);
