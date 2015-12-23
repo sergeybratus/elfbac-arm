@@ -472,6 +472,16 @@ struct mm_struct {
 	/* address of the bounds directory */
 	void __user *bd_addr;
 #endif
+
+#if defined(CONFIG_PAX_PAGEEXEC) || defined(CONFIG_PAX_ASLR)
+	unsigned long pax_flags;
+#endif
+
+#ifdef CONFIG_PAX_ASLR
+	unsigned long delta_mmap;	/* randomized offset */
+	unsigned long delta_stack;	/* randomized offset */
+#endif
+
 };
 
 static inline void mm_init_cpumask(struct mm_struct *mm)

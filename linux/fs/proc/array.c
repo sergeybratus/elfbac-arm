@@ -340,6 +340,24 @@ static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 		   cpumask_pr_args(&task->cpus_allowed));
 }
 
+#if defined(CONFIG_PAX_PAGEEXEC) || defined(CONFIG_PAX_ASLR)
+static inline void task_pax(struct seq_file *m, struct task_struct *p)
+{
+	/*
+	 * PaX: We retain compatibility with userland parsing the PaX line
+	 * from /proc/pid/status even though this split-out patch for ARM
+	 * has no support for SEGMEXEC or EMUTRAMP
+	 */
+	if (p->mm)
+		seq_printf(m, "PaX:\t%ce%c%cs\n",
+			   p->mm->pax_flags & MF_PAX_PAGEEXEC ? 'P' : 'p',
+			   p->mm->pax_flags & MF_PAX_MPROTECT ? 'M' : 'm',
+			   p->mm->pax_flags & MF_PAX_RANDMMAP ? 'R' : 'r');
+	else
+		seq_printf(m, "PaX:\t-----\n");
+}
+#endif
+
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
@@ -358,6 +376,11 @@ int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 	task_cpus_allowed(m, task);
 	cpuset_task_status_allowed(m, task);
 	task_context_switch_counts(m, task);
+
+#if defined(CONFIG_PAX_PAGEEXEC) || defined(CONFIG_PAX_ASLR)
+	task_pax(m, task);
+#endif
+
 	return 0;
 }
 

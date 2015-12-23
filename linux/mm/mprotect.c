@@ -29,6 +29,11 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
+#ifdef CONFIG_PAX_MPROTECT
+#include <linux/elf.h>
+#include <linux/binfmts.h>
+#endif
+
 /*
  * For a prot_numa update we only hold mmap_sem for read so there is a
  * potential race with faulting where a pmd was temporarily none. This
@@ -316,6 +321,12 @@ success:
 	 * held in write mode.
 	 */
 	vma->vm_flags = newflags;
+
+#ifdef CONFIG_PAX_MPROTECT
+	if (mm->binfmt && mm->binfmt->handle_mprotect)
+		mm->binfmt->handle_mprotect(vma, newflags);
+#endif
+
 	dirty_accountable = vma_wants_writenotify(vma);
 	vma_set_page_prot(vma);
 
@@ -389,6 +400,11 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	}
 	if (start > vma->vm_start)
 		prev = vma;
+
+#ifdef CONFIG_PAX_MPROTECT
+	if (current->mm->binfmt && current->mm->binfmt->handle_mprotect)
+		current->mm->binfmt->handle_mprotect(vma, vm_flags);
+#endif
 
 	for (nstart = start ; ; ) {
 		unsigned long newflags;

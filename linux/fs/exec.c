@@ -56,6 +56,9 @@
 #include <linux/pipe_fs_i.h>
 #include <linux/oom.h>
 #include <linux/compat.h>
+#include <linux/random.h>
+#include <linux/coredump.h>
+#include <linux/mman.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -280,6 +283,16 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	arch_bprm_mm_init(mm, vma);
 	up_write(&mm->mmap_sem);
 	bprm->p = vma->vm_end - sizeof(void *);
+
+#ifdef CONFIG_PAX_RANDUSTACK
+	/*
+	 * PaX: This is the 2nd-stage stack randomization which adds additional
+	 * intra-page randomization of argv/env
+	 */
+	if (randomize_va_space)
+		bprm->p ^= prandom_u32() & ~PAGE_MASK;
+#endif
+
 	return 0;
 err:
 	up_write(&mm->mmap_sem);
@@ -690,6 +703,28 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	bprm->exec -= stack_shift;
 
 	down_write(&mm->mmap_sem);
+
+	/* Move stack pages down in memory. */
+	if (stack_shift) {
+		ret = shift_arg_pages(vma, stack_shift);
+		if (ret)
+			goto out_unlock;
+	}
+
+#ifdef CONFIG_PAX_PAGEEXEC
+	/* PaX: Enforce a non-executable stack */
+	if (mm->pax_flags & MF_PAX_PAGEEXEC) {
+		vm_flags &= ~VM_EXEC;
+
+#ifdef CONFIG_PAX_MPROTECT
+		/* PaX: Prevent stack from becoming executable in the future */
+		if (mm->pax_flags & MF_PAX_MPROTECT)
+			vm_flags &= ~VM_MAYEXEC;
+#endif
+
+	}
+#endif
+
 	vm_flags = VM_STACK_FLAGS;
 
 	/*
@@ -709,13 +744,6 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	if (ret)
 		goto out_unlock;
 	BUG_ON(prev != vma);
-
-	/* Move stack pages down in memory. */
-	if (stack_shift) {
-		ret = shift_arg_pages(vma, stack_shift);
-		if (ret)
-			goto out_unlock;
-	}
 
 	/* mprotect_fixup is overkill to remove the temporary stack flags */
 	vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
@@ -740,6 +768,28 @@ int setup_arg_pages(struct linux_binprm *bprm,
 #endif
 	current->mm->start_stack = bprm->p;
 	ret = expand_stack(vma, stack_base);
+
+#if !defined(CONFIG_STACK_GROWSUP) && defined(CONFIG_PAX_RANDMMAP)
+	/*
+	 * PaX: Prevent reduction of ASLR entropy under address space exhaustion
+	 * by filling the space above the randomizied main stack base with
+	 * a PROT_NONE mapping.  On ARM we're unable to do something similar for
+	 * the bottom of the usable address space for compatibility reasons.
+	 * The STACK_TOP check ensures this is only done if address space exhaustion
+	 * is a reasonable concern (i.e. only on 32-bit architectures).
+	 */
+	if (!ret && (mm->pax_flags & MF_PAX_RANDMMAP) && STACK_TOP <= 0xFFFFFFFFU &&
+	    STACK_TOP > vma->vm_end) {
+		unsigned long size;
+		vm_flags_t vm_flags;
+
+		size = STACK_TOP - vma->vm_end;
+		vm_flags = VM_NONE | VM_DONTEXPAND | VM_DONTDUMP;
+
+		ret = vma->vm_end != mmap_region(NULL, vma->vm_end, size, vm_flags, 0);
+	}
+#endif
+
 	if (ret)
 		ret = -EFAULT;
 
@@ -1741,5 +1791,101 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 	return compat_do_execveat(fd,
 				  getname_flags(filename, lookup_flags, NULL),
 				  argv, envp, flags);
+}
+#endif
+
+int pax_check_flags(unsigned long *flags)
+{
+	int retval = 0;
+
+	if ((*flags & MF_PAX_MPROTECT)
+
+#ifdef CONFIG_PAX_MPROTECT
+	    && !(*flags & MF_PAX_PAGEEXEC)
+#endif
+
+	   )
+	{
+		*flags &= ~MF_PAX_MPROTECT;
+		retval = -EINVAL;
+	}
+
+	return retval;
+}
+
+EXPORT_SYMBOL(pax_check_flags);
+
+#ifdef CONFIG_PAX_PAGEEXEC
+char *pax_get_path(const struct path *path, char *buf, int buflen)
+{
+	char *pathname = d_path(path, buf, buflen);
+
+	if (IS_ERR(pathname))
+		goto toolong;
+
+	pathname = mangle_path(buf, pathname, "\t\n\\");
+	if (!pathname)
+		goto toolong;
+
+	*pathname = 0;
+	return buf;
+
+toolong:
+	return "<path too long>";
+}
+EXPORT_SYMBOL(pax_get_path);
+
+void pax_report_fault(struct pt_regs *regs, void *pc, void *sp)
+{
+	struct task_struct *tsk = current;
+	struct mm_struct *mm = current->mm;
+	char *buffer_exec = (char *)__get_free_page(GFP_KERNEL);
+	char *buffer_fault = (char *)__get_free_page(GFP_KERNEL);
+	char *path_exec = NULL;
+	char *path_fault = NULL;
+	unsigned long start = 0UL, end = 0UL, offset = 0UL;
+	siginfo_t info = { };
+
+	if (buffer_exec && buffer_fault) {
+		struct vm_area_struct *vma, *vma_exec = NULL, *vma_fault = NULL;
+
+		down_read(&mm->mmap_sem);
+		vma = mm->mmap;
+		while (vma && (!vma_exec || !vma_fault)) {
+			if (vma->vm_file && mm->exe_file == vma->vm_file && (vma->vm_flags & VM_EXEC))
+				vma_exec = vma;
+			if (vma->vm_start <= (unsigned long)pc && (unsigned long)pc < vma->vm_end)
+				vma_fault = vma;
+			vma = vma->vm_next;
+		}
+		if (vma_exec)
+			path_exec = pax_get_path(&vma_exec->vm_file->f_path, buffer_exec, PAGE_SIZE);
+		if (vma_fault) {
+			start = vma_fault->vm_start;
+			end = vma_fault->vm_end;
+			offset = vma_fault->vm_pgoff << PAGE_SHIFT;
+			if (vma_fault->vm_file)
+				path_fault = pax_get_path(&vma_fault->vm_file->f_path, buffer_fault, PAGE_SIZE);
+			else if ((unsigned long)pc >= mm->start_brk && (unsigned long)pc < mm->brk)
+				path_fault = "<heap>";
+			else if (vma_fault->vm_flags & (VM_GROWSDOWN | VM_GROWSUP))
+				path_fault = "<stack>";
+			else
+				path_fault = "<anonymous mapping>";
+		}
+		up_read(&mm->mmap_sem);
+	}
+	printk(KERN_ERR "PAX: execution attempt in: %s, %08lx-%08lx %08lx\n", path_fault, start, end, offset);
+	printk(KERN_ERR "PAX: terminating task: %s(%s):%d, uid/euid: %u/%u, PC: %p, SP: %p\n", path_exec, tsk->comm, task_pid_nr(tsk),
+			from_kuid_munged(&init_user_ns, task_uid(tsk)), from_kuid_munged(&init_user_ns, task_euid(tsk)), pc, sp);
+	free_page((unsigned long)buffer_exec);
+	free_page((unsigned long)buffer_fault);
+	pax_report_insns(regs, pc, sp);
+	info.si_signo = SIGKILL;
+	info.si_errno = 0;
+	info.si_code = SI_KERNEL;
+	info.si_pid = 0;
+	info.si_uid = 0;
+	do_coredump(&info);
 }
 #endif
