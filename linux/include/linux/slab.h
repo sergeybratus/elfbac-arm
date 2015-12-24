@@ -21,6 +21,13 @@
  * The ones marked DEBUG are only valid if CONFIG_DEBUG_SLAB is set.
  */
 #define SLAB_DEBUG_FREE		0x00000100UL	/* DEBUG: Perform (expensive) checks on free */
+
+#ifdef CONFIG_PAX_USERCOPY
+#define SLAB_USERCOPY		0x00000200UL	/* PaX: Allow copying objs to/from userland */
+#else
+#define SLAB_USERCOPY		0x00000000UL
+#endif
+
 #define SLAB_RED_ZONE		0x00000400UL	/* DEBUG: Red zone objs in a cache */
 #define SLAB_POISON		0x00000800UL	/* DEBUG: Poison objects */
 #define SLAB_HWCACHE_ALIGN	0x00002000UL	/* Align objs on cache lines */
@@ -143,6 +150,7 @@ void * __must_check krealloc(const void *, size_t, gfp_t);
 void kfree(const void *);
 void kzfree(const void *);
 size_t ksize(const void *);
+const char *check_heap_object(const void *ptr, unsigned long n);
 
 /*
  * Some archs want to perform DMA into kmalloc caches and need a guaranteed

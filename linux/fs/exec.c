@@ -61,6 +61,7 @@
 #include <linux/mman.h>
 
 #include <asm/uaccess.h>
+#include <asm/sections.h>
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
 
@@ -1889,3 +1890,83 @@ void pax_report_fault(struct pt_regs *regs, void *pc, void *sp)
 	do_coredump(&info);
 }
 #endif
+
+#ifdef CONFIG_PAX_USERCOPY
+/*  0: fully outside stack bounds
+ *  1: fully inside stack bounds
+ * -1: partially in bounds (implies an error)
+ */
+static int check_stack_object(const void *obj, unsigned long len)
+{
+	const void * const stack = task_stack_page(current);
+	const void * const stackend = stack + THREAD_SIZE;
+
+	if (obj + len < obj)
+		return -1;
+
+	if (obj + len <= stack || stackend <= obj)
+		return 0;
+
+	if (obj < stack || stackend < obj + len)
+		return -1;
+
+	return 1;
+}
+
+static void pax_report_usercopy(const void *ptr, unsigned long len, bool to_user, const char *type)
+{
+	printk(KERN_EMERG "PAX: kernel memory %s attempt detected %s %p (%s) (%lu bytes)\n",
+	       to_user ? "leak" : "overwrite", to_user ? "from" : "to", ptr, type ? : "unknown", len);
+	dump_stack();
+	do_group_exit(SIGKILL);
+}
+#endif
+
+#ifdef CONFIG_PAX_USERCOPY
+static inline bool check_kernel_text_object(unsigned long low, unsigned long high)
+{
+	unsigned long textlow = (unsigned long)_stext;
+	unsigned long texthigh = (unsigned long)_etext;
+
+	if (high <= textlow || low >= texthigh)
+		return false;
+	else
+		return true;
+}
+#endif
+
+void __check_object_size(const void *ptr, unsigned long n, bool to_user, bool const_size)
+{
+#ifdef CONFIG_PAX_USERCOPY
+	const char *type;
+
+	/*
+	 * we skip checkied copies of constant size as they're unlikely to be security-relevant
+	 * and this improves performance quite a bit
+	 */
+	if (const_size)
+		return;
+
+	if (!n)
+		return;
+
+	type = check_heap_object(ptr, n);
+	if (!type) {
+		int ret = check_stack_object(ptr, n);
+		if (ret == 1 || ret == 2)
+			return;
+		if (ret == 0) {
+			if (check_kernel_text_object((unsigned long)ptr, (unsigned long)ptr + n))
+				type = "<kernel text>";
+			else
+				return;
+		} else
+			type = "<process stack>";
+	}
+
+	pax_report_usercopy(ptr, n, to_user, type);
+#endif
+
+}
+EXPORT_SYMBOL(__check_object_size);
+

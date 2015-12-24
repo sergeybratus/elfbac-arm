@@ -127,6 +127,8 @@ static int __dcache_readdir(struct file *file,  struct dir_context *ctx,
 	struct dentry *dentry, *last;
 	struct ceph_dentry_info *di;
 	int err = 0;
+	char d_name[DNAME_INLINE_LEN];
+	const unsigned char *name;
 
 	/* claim ref on last dentry we returned */
 	last = fi->dentry;
@@ -190,7 +192,20 @@ more:
 
 	dout(" %llu (%llu) dentry %p %pd %p\n", di->offset, ctx->pos,
 	     dentry, dentry, d_inode(dentry));
-	if (!dir_emit(ctx, dentry->d_name.name,
+
+#ifdef CONFIG_PAX_USERCOPY
+	/*
+	 * PaX: Retain strict permissions on copies from struct with inlined
+	 * names by copying them to a temporary stack buffer
+	 */
+	if (dentry->d_name.name == dentry->d_iname) {
+		memcpy(d_name, dentry->d_name.name, dentry->d_name.len);
+		name = d_name;
+	} else
+#endif
+		name = dentry->d_name.name;
+
+	if (!dir_emit(ctx, name,
 		      dentry->d_name.len,
 		      ceph_translate_ino(dentry->d_sb, d_inode(dentry)->i_ino),
 		      d_inode(dentry)->i_mode >> 12)) {

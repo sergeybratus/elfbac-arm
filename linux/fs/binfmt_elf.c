@@ -181,6 +181,8 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 	int ei_index = 0;
 	const struct cred *cred = current_cred();
 	struct vm_area_struct *vma;
+	unsigned long saved_auxv[AT_VECTOR_SIZE];
+	const void *saved_auxv_ptr;
 
 	/*
 	 * In some cases (e.g. Hyper-Threading), we want to avoid L1
@@ -345,9 +347,20 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
 		return -EFAULT;
 	current->mm->env_end = p;
 
+#ifdef CONFIG_PAX_USERCOPY
+	/*
+	 * PaX: Retain strict permissions on copies from mm_struct by copying
+	 * auxv to temporary stack storage
+	 */
+	memcpy(saved_auxv, elf_info, ei_index * sizeof(elf_addr_t));
+	saved_auxv_ptr = saved_auxv;
+#else
+	saved_auxv_ptr = elf_info;
+#endif
+
 	/* Put the elf_info on the stack in the right place.  */
 	sp = (elf_addr_t __user *)envp + 1;
-	if (copy_to_user(sp, elf_info, ei_index * sizeof(elf_addr_t)))
+	if (copy_to_user(sp, saved_auxv_ptr, ei_index * sizeof(elf_addr_t)))
 		return -EFAULT;
 	return 0;
 }

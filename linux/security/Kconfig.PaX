@@ -124,4 +124,29 @@ config PAX_RANDMMAP
 
 endmenu
 
+menu "Miscellaneous hardening features"
+
+config PAX_USERCOPY
+	bool "Harden heap object copies between kernel and userland"
+	depends on ARM && (SLAB || SLUB)
+	help
+	  By saying Y here the kernel will enforce the size of heap objects
+	  when they are copied in either direction between the kernel and
+	  userland, even if only a part of the heap object is copied.
+
+	  Specifically, this checking prevents information leaking from the
+	  kernel heap during kernel to userland copies (if the kernel heap
+	  object is otherwise fully initialized) and prevents kernel heap
+	  overflows during userland to kernel copies.
+
+	  Note that the current implementation provides the strictest bounds
+	  checks for the SLUB allocator.
+
+	  Enabling this option also enables per-slab cache protection against
+	  data in a given cache being copied into/out of via userland
+	  accessors.  Though the whitelist of regions will be reduced over
+	  time, it notably protects important data structures like task structs.
+
+endmenu
+
 endmenu

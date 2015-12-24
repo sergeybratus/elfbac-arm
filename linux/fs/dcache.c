@@ -1568,7 +1568,16 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 	dentry->d_iname[DNAME_INLINE_LEN-1] = 0;
 	if (name->len > DNAME_INLINE_LEN-1) {
 		size_t size = offsetof(struct external_name, name[1]);
+#ifdef CONFIG_PAX_USERCOPY
+		/*
+		 * PaX: round up external name sizes to sizeof(unsigned long) to work around
+		 * Linux's new fast hashing method that operates on unsigned long width, even
+		 * if that technically goes beyond the bounds of the allocation
+		 */
+		struct external_name *p = kmalloc(round_up(size + name->len, sizeof(unsigned long)), GFP_KERNEL);
+#else
 		struct external_name *p = kmalloc(size + name->len, GFP_KERNEL);
+#endif
 		if (!p) {
 			kmem_cache_free(dentry_cache, dentry); 
 			return NULL;
@@ -3458,7 +3467,7 @@ void __init vfs_caches_init(unsigned long mempages)
 	mempages -= reserve;
 
 	names_cachep = kmem_cache_create("names_cache", PATH_MAX, 0,
-			SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL);
+			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_USERCOPY, NULL);
 
 	dcache_init();
 	inode_init();
