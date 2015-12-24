@@ -10,6 +10,7 @@ config PAX
 
 menu "PaX Control"
 	depends on PAX
+
 config PAX_XATTR_PAX_FLAGS
 	bool 'Use filesystem extended attributes marking'
 	select CIFS_XATTR if CIFS
@@ -125,6 +126,7 @@ config PAX_RANDMMAP
 endmenu
 
 menu "Miscellaneous hardening features"
+	depends on PAX
 
 config PAX_USERCOPY
 	bool "Harden heap object copies between kernel and userland"
