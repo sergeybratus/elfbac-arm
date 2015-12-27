@@ -22,7 +22,7 @@
  */
 static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
 		pte_t *dst_pte, pte_t *src_pte, struct vm_area_struct *vma,
-		unsigned long addr)
+		unsigned long addr, unsigned long flags)
 {
 	pte_t pte = *src_pte;
 	struct page *page;
@@ -47,13 +47,23 @@ static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
 	}
 
 out_set_pte:
+	if (flags & VM_WRITE)
+		pte = pte_mkwrite(pte);
+	else
+		pte = pte_wrprotect(pte);
+
+	if (flags & VM_EXEC)
+		pte = pte_mkexec(pte);
+	else
+		pte = pte_mknexec(pte);
+
 	set_pte_at(mm, addr, dst_pte, pte);
 	return 0;
 }
 
 static int elfbac_copy_pte_range(struct mm_struct *mm, pmd_t *dst_pmd,
 		pmd_t *src_pmd, struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
+		unsigned long end, unsigned long flags)
 {
 	pte_t *orig_src_pte, *orig_dst_pte;
 	pte_t *src_pte, *dst_pte;
@@ -75,8 +85,8 @@ again:
 			progress++;
 			continue;
 		}
-		entry.val = elfbac_copy_one_pte(mm, dst_pte, src_pte,
-							vma, addr);
+		entry.val = elfbac_copy_one_pte(mm, dst_pte, src_pte, vma,
+						addr, flags);
 		if (entry.val)
 			break;
 		progress += 8;
@@ -100,7 +110,7 @@ again:
 
 static inline int elfbac_copy_pmd_range(struct mm_struct *mm, pud_t *dst_pud,
 		pud_t *src_pud, struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
+		unsigned long end, unsigned long flags)
 {
 	pmd_t *src_pmd, *dst_pmd;
 	unsigned long next;
@@ -124,8 +134,8 @@ static inline int elfbac_copy_pmd_range(struct mm_struct *mm, pud_t *dst_pud,
 //		}
 		if (pmd_none_or_clear_bad(src_pmd))
 			continue;
-		if (elfbac_copy_pte_range(mm, dst_pmd, src_pmd,
-						vma, addr, next))
+		if (elfbac_copy_pte_range(mm, dst_pmd, src_pmd, vma,
+						addr, next, flags))
 			return -ENOMEM;
 	} while (dst_pmd++, src_pmd++, addr = next, addr != end);
 	return 0;
@@ -133,7 +143,7 @@ static inline int elfbac_copy_pmd_range(struct mm_struct *mm, pud_t *dst_pud,
 
 static inline int elfbac_copy_pud_range(struct mm_struct *mm, pgd_t *dst_pgd,
 		pgd_t *src_pgd, struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
+		unsigned long end, unsigned long flags)
 {
 	pud_t *src_pud, *dst_pud;
 	unsigned long next;
@@ -146,8 +156,8 @@ static inline int elfbac_copy_pud_range(struct mm_struct *mm, pgd_t *dst_pgd,
 		next = pud_addr_end(addr, end);
 		if (pud_none_or_clear_bad(src_pud))
 			continue;
-		if (elfbac_copy_pmd_range(mm, dst_pud, src_pud,
-						vma, addr, next))
+		if (elfbac_copy_pmd_range(mm, dst_pud, src_pud, vma,
+					  addr, next, flags))
 			return -ENOMEM;
 	} while (dst_pud++, src_pud++, addr = next, addr != end);
 	return 0;
@@ -155,7 +165,7 @@ static inline int elfbac_copy_pud_range(struct mm_struct *mm, pgd_t *dst_pgd,
 
 static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
 		struct vm_area_struct *vma, unsigned long addr,
-		unsigned long end)
+		unsigned long end, unsigned long flags)
 {
 	pgd_t *src_pgd = mm->pgd;
 	unsigned long next;
@@ -194,7 +204,7 @@ static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
 		if (pgd_none_or_clear_bad(src_pgd))
 			continue;
 		if (unlikely(elfbac_copy_pud_range(mm, dst_pgd, src_pgd,
-					    vma, addr, next))) {
+					    vma, addr, next, flags))) {
 			ret = -ENOMEM;
 			break;
 		}
@@ -204,7 +214,8 @@ static int elfbac_copy_page_range(struct mm_struct *mm, pgd_t *dst_pgd,
 }
 
 int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
-			struct vm_area_struct *vma, unsigned long addr)
+			struct vm_area_struct *vma, unsigned long addr,
+			unsigned long flags)
 {
 	unsigned long start, end;
 
@@ -215,7 +226,7 @@ int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 	if (start == end)
 		end += PAGE_SIZE;
 
-	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end);
+	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end, flags);
 }
 
 /*
@@ -830,6 +841,48 @@ static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsign
 	return NULL;
 }
 
+int elfbac_mm_is_present(struct mm_struct *mm, unsigned long addr)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	pgd = pgd_offset(mm, addr);
+	if (pgd_none(*pgd) || pgd_bad(*pgd) || !pgd_present(*pgd))
+		return 0;
+
+	pud = pud_offset(pgd, addr);
+	if (pud_none(*pud) || pud_bad(*pud) || !pud_present(*pud))
+		return 0;
+
+	pmd = pmd_offset(pud, addr);
+	if (pmd_none(*pmd) || pmd_bad(*pmd) || !pmd_present(*pmd))
+		return 0;
+
+	pte = pte_offset_map(pmd, addr);
+	if (!pte || pte_none(*pte) || !pte_present(*pte))
+		return 0;
+
+	return 1;
+}
+
+unsigned long elfbac_get_flags(struct elfbac_policy *policy, unsigned long addr)
+{
+	unsigned long start, end;
+	struct elfbac_section *section;
+
+	list_for_each_entry(section, &policy->current_state->sections_list, list) {
+		start = section->base;
+		end = start + section->size;
+
+		if (addr >= start && addr <= end)
+			return section->flags;
+	}
+
+	return 0;
+}
+
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		      unsigned int mask, struct elfbac_state **next_state)
 {
@@ -904,15 +957,15 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					continue;
 
 				if ((data_transition->flags & mask) && addr >= start && addr <= end) {
+					printk("SUCCESSFUL DATATRANSITION: %ld -> %ld\n",
+					       data_transition->from,
+					       data_transition->to);
 					*next_state = state;
 					return true;
 				}
 			}
 		}
 	}
-
-	printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
-	       policy->current_state->id, addr, mask);
 
 	return false;
 }

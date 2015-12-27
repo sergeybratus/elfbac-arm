@@ -258,13 +258,11 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		unsigned long sflags;
+		unsigned long flags, sflags;
 		struct elfbac_state *next_state;
 
 		/* From access_error above */
 		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
-
-		printk("PAGE FAULT addr: %lx, fsr: %x, flags: %x\n", addr, fsr, flags);
 
 		if (fsr & FSR_WRITE)
 			mask = VM_WRITE;
@@ -275,8 +273,11 @@ good_area:
 
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) &&
+		if (!(flags = elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state)) &&
 		    !(vma->vm_flags & VM_GROWSDOWN)) {
+			printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
+			       mm->elfbac_policy->current_state->id, addr, mask);
+
 			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 			goto out;
 		}
@@ -284,18 +285,29 @@ good_area:
 		if (next_state) {
 			mm->elfbac_policy->current_state = next_state;
 			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+
+			// Ensure we've switched to next_state's page tables, the
+			// NULL prev is a hack but doesn't affect ARM adversely
+			switch_mm(NULL, current->mm, current);
 			return 0;
 		}
 
-		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
-		if (fault != 0) {
-			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-			goto out;
+		if (!elfbac_mm_is_present(mm, addr & PAGE_MASK)) {
+			printk("HANDLING FAULT\n");
+			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
+			if (fault != 0) {
+				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+				goto out;
+			}
 		}
 
-		printk("Doing ELFBAC copy\n");
+		if ((vma->vm_flags & VM_GROWSDOWN))
+			flags = VM_READ | VM_WRITE;
+		else
+			flags = elfbac_get_flags(mm->elfbac_policy, addr);
 
-		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr);
+		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr,
+					    flags);
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 		goto out;
 	} else {
