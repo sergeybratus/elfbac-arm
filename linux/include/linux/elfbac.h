@@ -10,9 +10,7 @@
 /* Define an upper bound on policy size to prevent exhausting kernel resources,
  * can re-examine this later. */
 #define ELFBAC_POLICY_SIZE_MAX (PAGE_SIZE * 10)
-
 #define PT_ELFBAC_POLICY (PT_LOOS + 0xfe7fbac)
-
 #define UNDEFINED_STATE_ID (ULONG_MAX)
 
 struct elfbac_state {

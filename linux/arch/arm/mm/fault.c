@@ -258,7 +258,7 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		unsigned long flags, sflags;
+		unsigned long eflags, sflags;
 		struct elfbac_state *next_state;
 
 		/* From access_error above */
@@ -274,10 +274,10 @@ good_area:
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
 		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask,
-					       &next_state, &flags)) {
+					       &next_state, &eflags)) {
 
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
-				flags = VM_READ | VM_WRITE;
+				eflags = VM_READ | VM_WRITE;
 			} else {
 				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
 				       mm->elfbac_policy->current_state->id, addr, mask);
@@ -285,18 +285,6 @@ good_area:
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 				goto out;
 			}
-		}
-
-		if (next_state) {
-			printk("TRANSITIONING STATE, %d->%d\n",
-			       mm->elfbac_policy->current_state->id, next_state->id);
-			mm->elfbac_policy->current_state = next_state;
-			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-
-			// Ensure we've switched to next_state's page tables, the
-			// NULL prev is a hack but doesn't affect ARM adversely
-			switch_mm(NULL, current->mm, current);
-			return 0;
 		}
 
 		if (!elfbac_mm_is_present(mm, addr & PAGE_MASK)) {
@@ -307,8 +295,19 @@ good_area:
 			}
 		}
 
-		printk("Copying mapping with flags: %lx\n", flags);
-		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, flags);
+		if (next_state) {
+			printk("TRANSITIONING STATE, %ld->%ld\n",
+			       mm->elfbac_policy->current_state->id, next_state->id);
+			mm->elfbac_policy->current_state = next_state;
+			fault = VM_FAULT_MINOR;
+
+			schedule();
+		} else {
+			printk("Copying mapping with flags: %lx\n", eflags);
+			if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, eflags) == 0)
+				fault = VM_FAULT_MINOR;
+		}
+
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 		goto out;
 	} else {
@@ -381,6 +380,10 @@ retry:
 #endif
 	}
 
+#ifdef CONFIG_ELFBAC
+	if (mm->elfbac_policy)
+		printk("PF at %lx, pc = %lx\n", addr, regs->ARM_pc);
+#endif
 	fault = __do_page_fault(mm, addr, fsr, flags, tsk);
 
 	/* If we need to retry but a fatal signal is pending, handle the

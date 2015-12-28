@@ -57,6 +57,7 @@ out_set_pte:
 	else
 		pte = pte_mknexec(pte);
 
+	printk("Copied a pte at %lx\n", addr);
 	set_pte_at(mm, addr, dst_pte, pte);
 	return 0;
 }
@@ -226,6 +227,8 @@ int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 	if (start == end)
 		end += PAGE_SIZE;
 
+	printk("Copying from %lx->%lx in state %ld\n", start, end,
+	       policy->current_state->id);
 	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end, flags);
 }
 
@@ -898,7 +901,11 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	}
 
 	// Check for return from a call transition
+	// TODO: Need 1 return_state_id per state per task for shared policies
 	if ((mask & VM_EXEC) && policy->current_state->return_state_id != UNDEFINED_STATE_ID) {
+		printk("Checking ret from %ld to %ld\n", 
+		       policy->current_state->id,
+		       policy->current_state->return_state_id);
 		state = get_state_by_id(policy, policy->current_state->return_state_id);
 		if (state) {
 			list_for_each_entry(section, &state->sections_list, list) {
@@ -906,7 +913,11 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				end = start + section->size;
 
 				if ((section->flags & mask) && addr >= start && addr <= end) {
+					printk("Returning from %ld to %ld\n",
+					       policy->current_state->id,
+					       policy->current_state->return_state_id);
 					policy->current_state->return_state_id = UNDEFINED_STATE_ID;
+					*flags = section->flags;
 					*next_state = state;
 					return true;
 				}
@@ -932,7 +943,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					       call_transition->to);
 					state->return_state_id = policy->current_state->id;
 					*next_state = state;
-					return true;
+					goto good_transition;
 				}
 			}
 		}
@@ -952,9 +963,25 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					       data_transition->from,
 					       data_transition->to);
 					*next_state = state;
-					return true;
+					goto good_transition;
 				}
 			}
+		}
+	}
+
+	return false;
+
+good_transition:
+	list_for_each_entry(section, &(*next_state)->sections_list, list) {
+		start = section->base;
+		end = start + section->size;
+
+		printk("Checking %lx in %ld with flags %x, %lx->%lx:%lx\n",
+		       addr, (*next_state)->id, mask, start, end, section->flags);
+
+		if ((section->flags & mask) && addr >= start && addr <= end) {
+			*flags = section->flags;
+			return true;
 		}
 	}
 
