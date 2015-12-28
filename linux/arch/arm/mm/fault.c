@@ -262,7 +262,7 @@ good_area:
 		struct elfbac_state *next_state;
 
 		/* From access_error above */
-		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
+		unsigned int mask = VM_READ;
 
 		if (fsr & FSR_WRITE)
 			mask = VM_WRITE;
@@ -273,16 +273,23 @@ good_area:
 
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
-		if (!(flags = elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state)) &&
-		    !(vma->vm_flags & VM_GROWSDOWN)) {
-			printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
-			       mm->elfbac_policy->current_state->id, addr, mask);
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask,
+					       &next_state, &flags)) {
 
-			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-			goto out;
+			if ((vma->vm_flags & VM_GROWSDOWN)) {
+				flags = VM_READ | VM_WRITE;
+			} else {
+				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
+				       mm->elfbac_policy->current_state->id, addr, mask);
+
+				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+				goto out;
+			}
 		}
 
 		if (next_state) {
+			printk("TRANSITIONING STATE, %d->%d\n",
+			       mm->elfbac_policy->current_state->id, next_state->id);
 			mm->elfbac_policy->current_state = next_state;
 			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 
@@ -293,7 +300,6 @@ good_area:
 		}
 
 		if (!elfbac_mm_is_present(mm, addr & PAGE_MASK)) {
-			printk("HANDLING FAULT\n");
 			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 			if (fault != 0) {
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
@@ -301,13 +307,8 @@ good_area:
 			}
 		}
 
-		if ((vma->vm_flags & VM_GROWSDOWN))
-			flags = VM_READ | VM_WRITE;
-		else
-			flags = elfbac_get_flags(mm->elfbac_policy, addr);
-
-		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr,
-					    flags);
+		printk("Copying mapping with flags: %lx\n", flags);
+		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, flags);
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 		goto out;
 	} else {

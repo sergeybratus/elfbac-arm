@@ -867,24 +867,9 @@ int elfbac_mm_is_present(struct mm_struct *mm, unsigned long addr)
 	return 1;
 }
 
-unsigned long elfbac_get_flags(struct elfbac_policy *policy, unsigned long addr)
-{
-	unsigned long start, end;
-	struct elfbac_section *section;
-
-	list_for_each_entry(section, &policy->current_state->sections_list, list) {
-		start = section->base;
-		end = start + section->size;
-
-		if (addr >= start && addr <= end)
-			return section->flags;
-	}
-
-	return 0;
-}
-
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
-		      unsigned int mask, struct elfbac_state **next_state)
+		      unsigned int mask, struct elfbac_state **next_state,
+		      unsigned long *flags)
 {
 	unsigned long start, end;
 	struct elfbac_state *state;
@@ -892,6 +877,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	struct elfbac_data_transition *data_transition;
 	struct elfbac_call_transition *call_transition;
 
+	*flags = 0;
 	*next_state = NULL;
 
 	printk("GOT ELFBAC ACCESS: state: %ld, addr: %08lx, mask: %x\n",
@@ -905,8 +891,10 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		printk("Checking %lx in %ld with flags %x, %lx->%lx:%lx\n",
 		       addr, policy->current_state->id, mask, start, end, section->flags);
 
-		if ((section->flags & mask) && addr >= start && addr <= end)
+		if ((section->flags & mask) && addr >= start && addr <= end) {
+			*flags = section->flags;
 			return true;
+		}
 	}
 
 	// Check for return from a call transition
@@ -935,7 +923,10 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				if (!state)
 					continue;
 
-				if (call_transition->addr == addr) {
+				// Account for ARM pipelining, seems to exhibit
+				// both behaviors semi-randomly
+				if (call_transition->addr >= addr &&
+				    call_transition->addr <= addr + 8) {
 					printk("SUCCESSFUL CALL TRANSITION: %ld -> %ld\n",
 					       call_transition->from,
 					       call_transition->to);

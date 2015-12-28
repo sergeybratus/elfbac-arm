@@ -15,6 +15,7 @@
 #include <linux/mm.h>
 #include <linux/smp.h>
 #include <linux/percpu.h>
+#include <linux/elfbac.h>
 
 #include <asm/mmu_context.h>
 #include <asm/smp_plat.h>
