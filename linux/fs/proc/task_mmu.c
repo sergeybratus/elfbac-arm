@@ -293,6 +293,17 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma, int is_pid)
 	if (stack_guard_page_end(vma, end))
 		end -= PAGE_SIZE;
 
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Hide information from /proc/pid/maps that reveals ASLR layout
+	 */
+	if (pax_aslr_viewing_denied(mm)) {
+		start = 0;
+		end = 0;
+		pgoff = 0;
+	}
+#endif
+
 	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
 			start,
@@ -362,6 +373,17 @@ done:
 
 static int show_map(struct seq_file *m, void *v, int is_pid)
 {
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Don't allow a suid binary to be tricked into displaying
+	 * the contents of its own /proc/pid/maps based on an fd passed
+	 * in from another process
+	 */
+	if (current->exec_id != m->exec_id)
+		return 0;
+#endif
+
 	show_map_vma(m, v, is_pid);
 	m_cache_vma(m, v);
 	return 0;
@@ -619,10 +641,39 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		.mm = vma->vm_mm,
 		.private = &mss,
 	};
+	unsigned long vma_size = 0;
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Don't allow a suid binary to be tricked into displaying
+	 * the contents of its own /proc/pid/smaps based on an fd passed
+	 * in from another process
+	 */
+	if (current->exec_id != m->exec_id)
+		return 0;
+#endif
 
 	memset(&mss, 0, sizeof mss);
-	/* mmap_sem is held in m_start */
-	walk_page_vma(vma, &smaps_walk);
+
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Avoid filling in the mem_size_stats if
+	 * ASLR is active, maps address info is handled
+	 * via changes to show_map_vma() above
+	 * Also don't display the size of the vma
+	 */
+	if (!pax_aslr_viewing_denied(vma->vm_mm)) {
+#endif
+
+		/* mmap_sem is held in m_start */
+		walk_page_vma(vma, &smaps_walk);
+
+		vma_size = (vma->vm_end - vma->vm_start) >> 10;
+
+#ifdef CONFIG_PAX_ASLR
+	}
+#endif
 
 	show_map_vma(m, vma, is_pid);
 
@@ -641,7 +692,7 @@ static int show_smap(struct seq_file *m, void *v, int is_pid)
 		   "KernelPageSize: %8lu kB\n"
 		   "MMUPageSize:    %8lu kB\n"
 		   "Locked:         %8lu kB\n",
-		   (vma->vm_end - vma->vm_start) >> 10,
+		   vma_size,
 		   mss.resident >> 10,
 		   (unsigned long)(mss.pss >> (10 + PSS_SHIFT)),
 		   mss.shared_clean  >> 10,
@@ -1494,6 +1545,16 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
 	if (!mm)
 		return 0;
 
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Don't allow a suid binary to be tricked into displaying
+	 * the contents of its own /proc/pid/numa based on an fd passed
+	 * in from another process
+	 */
+	if (current->exec_id != m->exec_id)
+		return 0;
+#endif
+
 	/* Ensure we start with an empty set of numa_maps statistics. */
 	memset(md, 0, sizeof(*md));
 
@@ -1505,7 +1566,12 @@ static int show_numa_map(struct seq_file *m, void *v, int is_pid)
 		mpol_to_str(buffer, sizeof(buffer), proc_priv->task_mempolicy);
 	}
 
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: Hide vma start address when ASLR is enabled */
+	seq_printf(m, "%08lx %s", pax_aslr_viewing_denied(vma->vm_mm) ? 0UL : vma->vm_start, buffer);
+#else
 	seq_printf(m, "%08lx %s", vma->vm_start, buffer);
+#endif
 
 	if (file) {
 		seq_puts(m, " file=");

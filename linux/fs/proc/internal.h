@@ -281,6 +281,21 @@ struct proc_maps_private {
 #endif
 };
 
+#ifdef CONFIG_PAX_ASLR
+/*
+ * PaX: A task should only be allowed to view its own address layout when
+ * ASLR is enabled
+ */
+static inline bool pax_aslr_viewing_denied(const struct mm_struct *mm)
+{
+	if (mm != NULL && mm != current->mm &&
+	    (mm->pax_flags & MF_PAX_RANDMMAP))
+		return true;
+
+	return false;
+}
+#endif
+
 struct mm_struct *proc_mem_open(struct inode *inode, unsigned int mode);
 
 extern const struct file_operations proc_pid_maps_operations;

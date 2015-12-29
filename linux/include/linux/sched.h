@@ -1725,6 +1725,12 @@ struct task_struct {
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 	unsigned long	task_state_change;
 #endif
+
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: uniquely identifies this process, changes at execve() time */
+	u64 exec_id;
+#endif
+
 };
 
 /* PaX: mm_struct pax_flags values */

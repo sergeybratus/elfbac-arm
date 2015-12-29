@@ -66,6 +66,16 @@ int seq_open(struct file *file, const struct seq_operations *op)
 	p->user_ns = file->f_cred->user_ns;
 #endif
 
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: We save off the current task's exec_id here at open
+	 * time to track for various /proc entries implemented through
+	 * seq_files whether the reader/writer of that entry is a
+	 * different process than the one that opened it.
+	 */
+	p->exec_id = current->exec_id;
+#endif
+
 	/*
 	 * Wrappers around seq_open(e.g. swaps_open) need to be
 	 * aware of this. If they set f_version themselves, they

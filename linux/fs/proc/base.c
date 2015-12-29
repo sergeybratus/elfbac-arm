@@ -214,6 +214,23 @@ static int proc_pid_auxv(struct seq_file *m, struct pid_namespace *ns,
 	struct mm_struct *mm = mm_access(task, PTRACE_MODE_READ);
 	if (mm && !IS_ERR(mm)) {
 		unsigned int nwords = 0;
+
+#ifdef CONFIG_PAX_ASLR
+		/*
+		 * PaX: Disallow viewing auxv entries except for the current
+		 * task if ASLR is enabled unless we're already ptracing
+		 * the task in question (as GDB uses this info)
+		 * Auxv entries include AT_BASE which leaks ASLR information
+		 * as well as AT_RANDOM which may be the sole basis
+		 * for randomization applied at the application level
+		 */
+		if (pax_aslr_viewing_denied(mm) &&
+		    (!(task->ptrace & PT_PTRACED) || (task->parent != current))) {
+			mmput(mm);
+			return 0;
+		}
+#endif
+
 		do {
 			nwords += 2;
 		} while (mm->saved_auxv[nwords - 2] != 0); /* AT_NULL */
@@ -462,7 +479,13 @@ static int proc_pid_limits(struct seq_file *m, struct pid_namespace *ns,
 	return 0;
 }
 
-#ifdef CONFIG_HAVE_ARCH_TRACEHOOK
+#if defined(CONFIG_HAVE_ARCH_TRACEHOOK) && !defined(CONFIG_PAX_ASLR)
+/*
+ * PaX: Doesn't see any real use and can leak ASLR information to
+ * other processes (e.g. an argument to a syscall that provides an
+ * address in .data will very easily give away the base address of
+ * a PIE binary
+ */
 static int proc_pid_syscall(struct seq_file *m, struct pid_namespace *ns,
 			    struct pid *pid, struct task_struct *task)
 {
@@ -639,6 +662,20 @@ static int __mem_open(struct inode *inode, struct file *file, unsigned int mode)
 		return PTR_ERR(mm);
 
 	file->private_data = mm;
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Override f_version for /proc/pid/(mem,environ) so we can check it
+	 * later at read/write time against the reader/writer's exec_id.  This ensures
+	 * for instance that only the process that opens /proc/pid/mem may read or write
+	 * it (though for security reasons we explicitly disable writing).
+	 * environ_open() and mem_open() both call this function.
+	 * This prevents an attacker from tricking a suid app into reusing a
+	 * file descriptor to leak or modify its own memory contents.
+	 */
+	file->f_version = current->exec_id;
+#endif
+
 	return 0;
 }
 
@@ -659,6 +696,24 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 	unsigned long addr = *ppos;
 	ssize_t copied;
 	char *page;
+
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Disallow writing to /proc/pid/mem as it can be
+	 * abused by PHP for instance to bypass language restrictions
+	 * and provides an avenue for filesystem-related bugs to
+	 * reveal ASLR layouts
+	 */
+	if (write)
+		return -EPERM;
+	/*
+	 * PaX: Disallow processes other than the one that opened
+	 * /proc/pid/mem to read from the associated file descriptor
+	 */
+	if (file->f_version != current->exec_id)
+		return 0;
+#endif
 
 	if (!mm)
 		return 0;
@@ -763,6 +818,15 @@ static ssize_t environ_read(struct file *file, char __user *buf,
 
 	if (!mm)
 		return 0;
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Disallow processes other than the one that opened
+	 * /proc/pid/environ to read from the associated file descriptor
+	 */
+	if (file->f_version != current->exec_id)
+		return 0;
+#endif
 
 	page = (char *)__get_free_page(GFP_TEMPORARY);
 	if (!page)
@@ -2569,7 +2633,8 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("autogroup",  S_IRUGO|S_IWUSR, proc_pid_sched_autogroup_operations),
 #endif
 	REG("comm",      S_IRUGO|S_IWUSR, proc_pid_set_comm_operations),
-#ifdef CONFIG_HAVE_ARCH_TRACEHOOK
+#if defined(CONFIG_HAVE_ARCH_TRACEHOOK) && !defined(CONFIG_PAX_ASLR)
+	/* PaX: Disabled as it can leak ASLR layout via syscall args */
 	ONE("syscall",    S_IRUSR, proc_pid_syscall),
 #endif
 	ONE("cmdline",    S_IRUGO, proc_pid_cmdline),
@@ -2915,7 +2980,8 @@ static const struct pid_entry tid_base_stuff[] = {
 	REG("sched",     S_IRUGO|S_IWUSR, proc_pid_sched_operations),
 #endif
 	REG("comm",      S_IRUGO|S_IWUSR, proc_pid_set_comm_operations),
-#ifdef CONFIG_HAVE_ARCH_TRACEHOOK
+#if defined(CONFIG_HAVE_ARCH_TRACEHOOK) && !defined(CONFIG_PAX_ASLR)
+	/* PaX: Disabled as it can leak ASLR layout via syscall args */
 	ONE("syscall",   S_IRUSR, proc_pid_syscall),
 #endif
 	ONE("cmdline",   S_IRUGO, proc_pid_cmdline),

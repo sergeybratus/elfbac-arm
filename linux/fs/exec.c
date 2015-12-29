@@ -214,6 +214,19 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		if (size <= ARG_MAX)
 			return page;
 
+
+#ifdef CONFIG_PAX_ASLR
+		/* PaX: Only allow 512KB for argv+env on suid/sgid binaries
+		 * to prevent easy ASLR exhaustion
+		 */
+		if ((!uid_eq(bprm->cred->euid, current_euid()) ||
+		     !gid_eq(bprm->cred->egid, current_egid())) &&
+		    (size > (512 * 1024))) {
+			put_page(page);
+			return NULL;
+		}
+#endif
+
 		/*
 		 * Limit to 1/4-th the stack size for the argv+env strings.
 		 * This ensures that:
@@ -1523,6 +1536,38 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
+#ifdef CONFIG_PAX_ASLR
+/*
+ * PaX: For performance reasons we split up the u64 space into per-cpu ranges
+ * This still avoids any duplication of the 64-bit exec ids without having to
+ * use any expensive locking or 64-bit atomic operations
+ * There is method to the madness of starting each value off at the CPU number
+ * rather than splitting up the range into distinct areas -- it allows us
+ * to ignore the overflow case in code and let the CPU itself handle it whenever
+ * a per-CPU value eventually overflows.  It constrains the overflow to the
+ * 48 MSBs without disturbing the CPU id in the lower 16 MSBs.
+ */
+static DEFINE_PER_CPU(u64, exec_counter);
+static int __init init_exec_counters(void)
+{
+	unsigned int cpu;
+
+	for_each_possible_cpu(cpu) {
+		per_cpu(exec_counter, cpu) = (u64)cpu;
+	}
+
+	return 0;
+}
+early_initcall(init_exec_counters);
+static inline void increment_exec_counter(void)
+{
+	BUILD_BUG_ON(NR_CPUS > (1 << 16));
+	current->exec_id = this_cpu_add_return(exec_counter, 1 << 16);
+}
+#else
+static inline void increment_exec_counter(void) {}
+#endif
+
 /*
  * sys_execve() executes a new program.
  */
@@ -1536,6 +1581,11 @@ static int do_execveat_common(int fd, struct filename *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
+
+#ifdef CONFIG_PAX_ASLR
+	unsigned long saved_stack_rlimit;
+	bool modified_rlimit = false;
+#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1619,6 +1669,21 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: Limit total stack size for suid binaries to 8MB by forcing
+	 * an upper rlimit bound.  If the execve fails, we will restore the
+	 * rlimit for the current process below
+	 */
+
+	if ((!uid_eq(bprm->cred->euid, current_euid()) ||
+	     !gid_eq(bprm->cred->egid, current_egid())) &&
+	    (current->signal->rlim[RLIMIT_STACK].rlim_cur > (8 * 1024 * 1024))) {
+		saved_stack_rlimit = current->signal->rlim[RLIMIT_STACK].rlim_cur;
+		current->signal->rlim[RLIMIT_STACK].rlim_cur = 8 * 1024 * 1024;
+		modified_rlimit = true;
+	}
+#endif
+
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;
@@ -1637,6 +1702,10 @@ static int do_execveat_common(int fd, struct filename *filename,
 		goto out;
 
 	/* execve succeeded */
+
+	/* PaX: Update current->exec_id */
+	increment_exec_counter();
+
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
 	acct_update_integrals(current);
@@ -1649,6 +1718,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 	return retval;
 
 out:
+
+#ifdef CONFIG_PAX_ASLR
+	if (modified_rlimit)
+		current->signal->rlim[RLIMIT_STACK].rlim_cur = saved_stack_rlimit;
+#endif
+
 	if (bprm->mm) {
 		acct_arg_size(bprm, 0);
 		mmput(bprm->mm);

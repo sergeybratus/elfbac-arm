@@ -27,6 +27,12 @@ struct seq_file {
 	struct mutex lock;
 	const struct seq_operations *op;
 	int poll_event;
+
+#ifdef CONFIG_PAX_ASLR
+        /* PaX: uniquely identifies this process that opened this seq_file */
+        u64 exec_id;
+#endif
+
 #ifdef CONFIG_USER_NS
 	struct user_namespace *user_ns;
 #endif

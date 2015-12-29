@@ -284,6 +284,7 @@ static unsigned long do_brk(unsigned long addr, unsigned long len);
 
 SYSCALL_DEFINE1(brk, unsigned long, brk)
 {
+	unsigned long rlim;
 	unsigned long retval;
 	unsigned long newbrk, oldbrk;
 	struct mm_struct *mm = current->mm;
@@ -308,13 +309,26 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	if (brk < min_brk)
 		goto out;
 
+	rlim = rlimit(RLIMIT_DATA);
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Force a minimum 16MB brk heap on suid/sgid binaries
+	 * This ensures initial allocations can't be forced by an attacker
+	 * to use mmap, reducing the effective amount of entropy
+	 */
+	if (rlim < (4096 * PAGE_SIZE) && (get_dumpable(mm) != SUID_DUMP_USER) && 
+	    !uid_eq(current_uid(), GLOBAL_ROOT_UID))
+		rlim = 4096 * PAGE_SIZE;
+#endif
+
 	/*
 	 * Check against rlimit here. If this check is done later after the test
 	 * of oldbrk with newbrk then it can escape the test and let the data
 	 * segment grow beyond its set limit the in case where the limit is
 	 * not page aligned -Ram Gupta
 	 */
-	if (check_data_rlimit(rlimit(RLIMIT_DATA), brk, mm->start_brk,
+	if (check_data_rlimit(rlim, brk, mm->start_brk,
 			      mm->end_data, mm->start_data))
 		goto out;
 
