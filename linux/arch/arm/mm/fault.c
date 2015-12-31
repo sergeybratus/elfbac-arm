@@ -279,22 +279,20 @@ good_area:
 				      &next_state, &elfbac_access_flags)) {
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
 				elfbac_access_flags = VM_READ | VM_WRITE;
+			} else if (!vma->vm_file || addr > mm->start_stack) {
+				// We don't label anonymous pages from mmap, so forward their
+				// permissions to all states. Also handle vdso pages above stack.
+				elfbac_access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
 			} else {
-				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x, fault: %d\n",
-				       mm->elfbac_policy->current_state->id, addr, mask, fault);
+				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, mask: %x\n",
+				       mm->elfbac_policy->current_state->id, addr, regs->ARM_pc, mask);
 
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 				goto out;
 			}
 		}
 
-		if (!elfbac_mm_is_present(mm, addr & PAGE_MASK)) {
-			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
-			if (fault != 0) {
-				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-				goto out;
-			}
-		}
+		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 
 		if (next_state) {
 			mm->elfbac_policy->current_state = next_state;
@@ -303,8 +301,8 @@ good_area:
 			atomic64_set(&mm->context.id, asid);
 		}
 
-		if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, elfbac_access_flags) == 0)
-			fault = VM_FAULT_MINOR;
+		if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, elfbac_access_flags) != 0)
+			fault = VM_FAULT_BADACCESS;
 
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 

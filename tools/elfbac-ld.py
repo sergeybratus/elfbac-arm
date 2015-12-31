@@ -111,7 +111,9 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
                 if section['flags'] == 'rw' and is_bss(section['description']):
                     name = '.bss.' + state['name']
 
-            base, size = section_map.get(name, (0, 0))
+            base, size = section.get('base'), section.get('size')
+            if not base or not size:
+                base, size = section_map.get(name, (0, 0))
 
             if verbose:
                 print '\t%s: %08x->%08x, %x' % (name, base, base + size, flags)

@@ -489,14 +489,6 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 		list_for_each_entry(section, &state->sections_list, list) {
 			if (section->base + section->size < section->base)
 				return -EINVAL;
-
-			if (section->flags & VM_WRITE && !access_ok(VERIFY_WRITE,
-								      (void *)section->base,
-								      section->size))
-				return -EINVAL;
-			else if (!access_ok(VERIFY_READ, (void *)section->base,
-					    section->size))
-				return -EINVAL;
 		}
 
 	}
@@ -514,23 +506,11 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 
 		if (data_transition->base + data_transition->size < data_transition->base)
 			return -EINVAL;
-
-		if (data_transition->flags & VM_WRITE && !access_ok(VERIFY_WRITE,
-								      (void *)data_transition->base,
-								      data_transition->size))
-			return -EINVAL;
-		else if (!access_ok(VERIFY_READ, (void *)data_transition->base,
-				    data_transition->size))
-			return -EINVAL;
 	}
 
 	list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
 		if (call_transition->from > num_states ||
 		    call_transition->to > num_states)
-			return -EINVAL;
-
-		if (!access_ok(VERIFY_READ, (void *)call_transition->addr,
-			       sizeof(unsigned long)))
 			return -EINVAL;
 	}
 
