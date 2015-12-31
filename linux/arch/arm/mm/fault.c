@@ -258,8 +258,9 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		unsigned long eflags, sflags;
+		unsigned long elfbac_access_flags, sflags;
 		struct elfbac_state *next_state;
+		u64 asid;
 
 		/* From access_error above */
 		unsigned int mask = VM_READ;
@@ -274,10 +275,10 @@ good_area:
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
 		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask,
-					       &next_state, &eflags)) {
+					       &next_state, &elfbac_access_flags)) {
 
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
-				eflags = VM_READ | VM_WRITE;
+				elfbac_access_flags = VM_READ | VM_WRITE;
 			} else {
 				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
 				       mm->elfbac_policy->current_state->id, addr, mask);
@@ -299,16 +300,20 @@ good_area:
 			printk("TRANSITIONING STATE, %ld->%ld\n",
 			       mm->elfbac_policy->current_state->id, next_state->id);
 			mm->elfbac_policy->current_state = next_state;
-			fault = VM_FAULT_MINOR;
 
-			schedule();
-		} else {
-			printk("Copying mapping with flags: %lx\n", eflags);
-			if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, eflags) == 0)
-				fault = VM_FAULT_MINOR;
+			asid = atomic64_read(&mm->elfbac_policy->current_state->context.id);
+			atomic64_set(&mm->context.id, asid);
 		}
 
+		printk("Copying mapping with flags: %lx\n", elfbac_access_flags);
+		if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, elfbac_access_flags) == 0)
+			fault = VM_FAULT_MINOR;
+
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+
+		if (next_state)
+			switch_mm(NULL, current->mm, current);
+
 		goto out;
 	} else {
 		return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
