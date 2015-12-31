@@ -234,7 +234,8 @@ static inline bool access_error(unsigned int fsr, struct vm_area_struct *vma)
 
 static int __kprobes
 __do_page_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
-		unsigned int flags, struct task_struct *tsk)
+		unsigned int flags, struct task_struct *tsk,
+		struct pt_regs *regs)
 {
 	struct vm_area_struct *vma;
 	int fault;
@@ -274,14 +275,13 @@ good_area:
 
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask,
-					       &next_state, &elfbac_access_flags)) {
-
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, regs->ARM_lr,
+				      &next_state, &elfbac_access_flags)) {
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
 				elfbac_access_flags = VM_READ | VM_WRITE;
 			} else {
-				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x\n",
-				       mm->elfbac_policy->current_state->id, addr, mask);
+				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, mask: %x, fault: %d\n",
+				       mm->elfbac_policy->current_state->id, addr, mask, fault);
 
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 				goto out;
@@ -297,15 +297,12 @@ good_area:
 		}
 
 		if (next_state) {
-			printk("TRANSITIONING STATE, %ld->%ld\n",
-			       mm->elfbac_policy->current_state->id, next_state->id);
 			mm->elfbac_policy->current_state = next_state;
 
 			asid = atomic64_read(&mm->elfbac_policy->current_state->context.id);
 			atomic64_set(&mm->context.id, asid);
 		}
 
-		printk("Copying mapping with flags: %lx\n", elfbac_access_flags);
 		if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, elfbac_access_flags) == 0)
 			fault = VM_FAULT_MINOR;
 
@@ -385,11 +382,7 @@ retry:
 #endif
 	}
 
-#ifdef CONFIG_ELFBAC
-	if (mm->elfbac_policy)
-		printk("PF at %lx, pc = %lx\n", addr, regs->ARM_pc);
-#endif
-	fault = __do_page_fault(mm, addr, fsr, flags, tsk);
+	fault = __do_page_fault(mm, addr, fsr, flags, tsk, regs);
 
 	/* If we need to retry but a fatal signal is pending, handle the
 	 * signal first. We do not need to release the mmap_sem because

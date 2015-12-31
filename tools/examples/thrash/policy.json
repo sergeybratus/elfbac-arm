@@ -15,7 +15,7 @@
             "name": "read",
             "stack": "stack",
             "sections" : [
-                { "name": "buf", "create": false, "description": "*main.o(.data.buf)", "flags": "rw" },
+                { "name": ".data.buf", "create": false, "description": "*main.o(.data.buf)", "flags": "rw" },
                 { "description": "*read.o(.text*)", "flags": "rx" },
                 { "description": "*read.o(.rodata*)", "flags": "r" },
                 { "description": "*read.o(.data*)", "flags": "rw" },
@@ -26,7 +26,7 @@
             "name": "write",
             "stack": "stack",
             "sections" : [
-                { "name": "buf", "create": false, "description": "*main.o(.data.buf)", "flags": "r" },
+                { "name": ".data.buf", "create": false, "description": "*main.o(.data.buf)", "flags": "r" },
                 { "description": "*write.o(.text*)", "flags": "rx" },
                 { "description": "*write.o(.rodata*)", "flags": "r" },
                 { "description": "*write.o(.data*)", "flags": "rw" },

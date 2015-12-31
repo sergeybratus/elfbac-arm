@@ -47,17 +47,15 @@ static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
 	}
 
 out_set_pte:
-	if (flags & VM_WRITE)
-		pte = pte_mkwrite(pte);
-	else
+	if (!(flags & VM_WRITE))
 		pte = pte_wrprotect(pte);
 
-	if (flags & VM_EXEC)
-		pte = pte_mkexec(pte);
-	else
+	if (!(flags & VM_EXEC))
 		pte = pte_mknexec(pte);
 
-	printk("Copied a pte at %lx\n", addr);
+	if (!flags)
+		pte = pte_modify(pte, PAGE_NONE);
+
 	set_pte_at(mm, addr, dst_pte, pte);
 	return 0;
 }
@@ -227,8 +225,6 @@ int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 	if (start == end)
 		end += PAGE_SIZE;
 
-	printk("Copying from %lx->%lx in state %ld\n", start, end,
-	       policy->current_state->id);
 	return elfbac_copy_page_range(mm, dst_pgd, vma, start, end, flags);
 }
 
@@ -659,10 +655,6 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 				goto err;
 			}
 
-			printk("Got transition from %ld to %ld on %08lx\n",
-			       call_transition->from, call_transition->to,
-			       call_transition->addr);
-
 			list_add_tail(&call_transition->list, &out->call_transitions_list);
 			break;
 		default:
@@ -870,8 +862,8 @@ int elfbac_mm_is_present(struct mm_struct *mm, unsigned long addr)
 }
 
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
-		      unsigned int mask, struct elfbac_state **next_state,
-		      unsigned long *flags)
+		      unsigned int mask, unsigned long lr,
+		      struct elfbac_state **next_state, unsigned long *flags)
 {
 	unsigned long start, end;
 	struct elfbac_state *state;
@@ -882,45 +874,26 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	*flags = 0;
 	*next_state = NULL;
 
-	printk("GOT ELFBAC ACCESS: state: %ld, addr: %08lx, mask: %x\n",
-	       policy->current_state->id, addr, mask);
+	// Check for return from a call transition
+	// TODO: Need 1 return_state_id per state per task for shared policies
+	if ((mask & VM_EXEC) && addr == policy->current_state->return_addr &&
+	    policy->current_state->return_state_id != UNDEFINED_STATE_ID) {
+		state = get_state_by_id(policy, policy->current_state->return_state_id);
+		if (state) {
+			policy->current_state->return_state_id = UNDEFINED_STATE_ID;
+			*next_state = state;
+			goto good_transition;
+		}
+	}
 
 	// Common case, addr is allowed in current state
 	list_for_each_entry(section, &policy->current_state->sections_list, list) {
 		start = section->base;
 		end = start + section->size;
 
-		printk("Checking %lx in %ld with flags %x, %lx->%lx:%lx\n",
-		       addr, policy->current_state->id, mask, start, end, section->flags);
-
 		if ((section->flags & mask) && addr >= start && addr <= end) {
 			*flags = section->flags;
 			return true;
-		}
-	}
-
-	// Check for return from a call transition
-	// TODO: Need 1 return_state_id per state per task for shared policies
-	if ((mask & VM_EXEC) && policy->current_state->return_state_id != UNDEFINED_STATE_ID) {
-		printk("Checking ret from %ld to %ld\n", 
-		       policy->current_state->id,
-		       policy->current_state->return_state_id);
-		state = get_state_by_id(policy, policy->current_state->return_state_id);
-		if (state) {
-			list_for_each_entry(section, &state->sections_list, list) {
-				start = section->base;
-				end = start + section->size;
-
-				if ((section->flags & mask) && addr >= start && addr <= end) {
-					printk("Returning from %ld to %ld\n",
-					       policy->current_state->id,
-					       policy->current_state->return_state_id);
-					policy->current_state->return_state_id = UNDEFINED_STATE_ID;
-					*flags = section->flags;
-					*next_state = state;
-					return true;
-				}
-			}
 		}
 	}
 
@@ -933,14 +906,9 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				if (!state)
 					continue;
 
-				// Account for ARM pipelining, seems to exhibit
-				// both behaviors semi-randomly
-				if (call_transition->addr >= addr &&
-				    call_transition->addr <= addr + 8) {
-					printk("SUCCESSFUL CALL TRANSITION: %ld -> %ld\n",
-					       call_transition->from,
-					       call_transition->to);
+				if (call_transition->addr == addr) {
 					state->return_state_id = policy->current_state->id;
+					state->return_addr = lr;
 					*next_state = state;
 					goto good_transition;
 				}
@@ -958,9 +926,6 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					continue;
 
 				if ((data_transition->flags & mask) && addr >= start && addr <= end) {
-					printk("SUCCESSFUL DATATRANSITION: %ld -> %ld\n",
-					       data_transition->from,
-					       data_transition->to);
 					*next_state = state;
 					goto good_transition;
 				}
@@ -974,9 +939,6 @@ good_transition:
 	list_for_each_entry(section, &(*next_state)->sections_list, list) {
 		start = section->base;
 		end = start + section->size;
-
-		printk("Checking %lx in %ld with flags %x, %lx->%lx:%lx\n",
-		       addr, (*next_state)->id, mask, start, end, section->flags);
 
 		if ((section->flags & mask) && addr >= start && addr <= end) {
 			*flags = section->flags;

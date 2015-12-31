@@ -17,6 +17,7 @@ struct elfbac_state {
 	unsigned long id;
 	unsigned long stack_id;
 	unsigned long return_state_id;
+	unsigned long return_addr;
 	struct list_head list;
 	struct list_head sections_list;
 	pgd_t *pgd;
@@ -64,8 +65,8 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig,
 		struct elfbac_policy *new);
 int elfbac_mm_is_present(struct mm_struct *mm, unsigned long addr);
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
-		unsigned int mask, struct elfbac_state **next_state,
-		unsigned long *flags);
+		unsigned int mask, unsigned long lr,
+		struct elfbac_state **next_state, unsigned long *flags);
 int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
 		struct vm_area_struct *vma, unsigned long addr,
 		unsigned long flags);
