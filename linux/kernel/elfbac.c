@@ -555,10 +555,10 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 	unsigned long flags;
 	unsigned long cur_state_id = 0;
 
-	struct elfbac_state *state = NULL;
-	struct elfbac_section *section = NULL;
-	struct elfbac_data_transition *data_transition = NULL;
-	struct elfbac_call_transition *call_transition = NULL;
+	struct elfbac_state *state;
+	struct elfbac_section *section;
+	struct elfbac_data_transition *data_transition;
+	struct elfbac_call_transition *call_transition;
 
 	spin_lock_init(&out->lock);
 	spin_lock_irqsave(&out->lock, flags);
@@ -569,12 +569,12 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 
 	retval = -EINVAL;
 	if (parse_ulong(&buf, &size, &out->num_stacks) != 0)
-		goto out;
+		goto err;
 
 	while (size) {
 		retval = -EINVAL;
 		if (parse_ulong(&buf, &size, (unsigned long *)&type) != 0)
-			goto out;
+			goto err;
 
 		switch (type) {
 		case STATE:
@@ -582,27 +582,33 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			state = kmalloc(sizeof(struct elfbac_state),
 					GFP_KERNEL);
 			if (!state)
-				goto out;
+				goto err;
 
 			state->pgd = pgd_alloc(mm);
-			if (!state->pgd)
-				goto out;
+			if (!state->pgd) {
+				kfree(state);
+				goto err;
+			}
 
 			retval = elfbac_parse_state(&buf, &size, state);
-			if (retval != 0)
-				goto out;
+			if (retval != 0) {
+				pgd_free(mm, state->pgd);
+				kfree(state);
+				goto err;
+			}
 
 			state->id = cur_state_id++;
 			state->return_state_id = UNDEFINED_STATE_ID;
 
 			memset(&state->context, 0, sizeof(mm_context_t));
 			INIT_LIST_HEAD(&state->sections_list);
+
 			list_add_tail(&state->list, &out->states_list);
-			state = NULL;
 			break;
 		case SECTION:
 			if (list_empty(&out->states_list))
-				goto out;
+				goto err;
+
 			state = list_last_entry(&out->states_list,
 						struct elfbac_state,
 						list);
@@ -611,15 +617,15 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			section = kmalloc(sizeof(struct elfbac_section),
 					  GFP_KERNEL);
 			if (!section)
-				goto out;
+				goto err;
 
 			retval = elfbac_parse_section(&buf, &size, section);
-			if (retval != 0)
-				goto out;
+			if (retval != 0) {
+				kfree(section);
+				goto err;
+			}
 
 			list_add_tail(&section->list, &state->sections_list);
-			state = NULL;
-			section = NULL;
 			break;
 		case DATA_TRANSITION:
 			retval = -ENOMEM;
@@ -627,15 +633,16 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 						  sizeof(struct elfbac_data_transition),
 						  GFP_KERNEL);
 			if (!data_transition)
-				goto out;
+				goto err;
 
 			retval = elfbac_parse_data_transition(&buf, &size,
 							      data_transition);
-			if (retval != 0)
-				goto out;
+			if (retval != 0) {
+				kfree(data_transition);
+				goto err;
+			}
 
 			list_add_tail(&data_transition->list, &out->data_transitions_list);
-			data_transition = NULL;
 			break;
 		case CALL_TRANSITION:
 			retval = -ENOMEM;
@@ -643,28 +650,29 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 						  sizeof(struct elfbac_call_transition),
 						  GFP_KERNEL);
 			if (!call_transition)
-				goto out;
+				goto err;
 
 			retval = elfbac_parse_call_transition(&buf, &size,
 							      call_transition);
-			if (retval != 0)
-				goto out;
+			if (retval != 0) {
+				kfree(call_transition);
+				goto err;
+			}
 
 			printk("Got transition from %ld to %ld on %08lx\n",
 			       call_transition->from, call_transition->to,
 			       call_transition->addr);
 
 			list_add_tail(&call_transition->list, &out->call_transitions_list);
-			call_transition = NULL;
 			break;
 		default:
-			goto out;
+			goto err;
 		}
 	}
 
 	retval = -EINVAL;
 	if (elfbac_validate_policy(out) != 0)
-		goto out;
+		goto err;
 
 	// TODO: Figure out stacks
 
@@ -672,18 +680,9 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 	spin_unlock_irqrestore(&out->lock, flags);
 	return 0;
 
-out:
-	elfbac_policy_destroy(mm, out);
-
-	if (state && state->pgd)
-		pgd_free(mm, state->pgd);
-
-	kfree(state);
-	kfree(section);
-	kfree(data_transition);
-	kfree(call_transition);
-
+err:
 	spin_unlock_irqrestore(&out->lock, flags);
+	elfbac_policy_destroy(mm, out);
 
 	return retval;
 }
