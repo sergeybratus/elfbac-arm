@@ -12,7 +12,6 @@
 #include <linux/cpumask.h>
 #include <linux/uprobes.h>
 #include <linux/page-flags-layout.h>
-#include <linux/elfbac.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
 
@@ -346,6 +345,10 @@ struct task_rss_stat {
 struct mm_rss_stat {
 	atomic_long_t count[NR_MM_COUNTERS];
 };
+
+#ifdef CONFIG_ELFBAC
+struct elfbac_policy;
+#endif
 
 struct kioctx_table;
 struct mm_struct {
