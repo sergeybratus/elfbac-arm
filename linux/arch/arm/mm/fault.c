@@ -151,6 +151,15 @@ __do_kernel_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 	if (fixup_exception(regs))
 		return;
 
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	/* PaX: handles the case of accessing a non-present page in userland */
+	if (addr < TASK_SIZE)
+		printk(KERN_EMERG "PAX %s:%d, uid/euid: %u/%u, attempted to access "
+		       "userland memory at %08lx\n", current->comm, task_pid_nr(current),
+		       from_kuid_munged(&init_user_ns, current_uid()),
+		       from_kuid_munged(&init_user_ns, current_euid()), addr);
+#endif
+
 	/*
 	 * No handler, we'll have to terminate things with extreme prejudice.
 	 */
@@ -641,9 +650,20 @@ do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	const struct fsr_info *inf = fsr_info + fsr_fs(fsr);
 	struct siginfo info;
 
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	if (addr < TASK_SIZE && is_domain_fault(fsr)) {
+		printk(KERN_EMERG "PAX %s:%d, uid/euid: %u/%u, attempted to access "
+		       "userland memory at %08lx\n", current->comm, task_pid_nr(current),
+		       from_kuid_munged(&init_user_ns, current_uid()),
+		       from_kuid_munged(&init_user_ns, current_euid()), addr);
+		goto die;
+	}
+#endif
+
 	if (!inf->fn(addr, fsr & ~FSR_LNX_PF, regs))
 		return;
 
+die:
 	pr_alert("Unhandled fault: %s (0x%03x) at 0x%08lx\n",
 		inf->name, fsr, addr);
 	show_pte(current->mm, addr);
@@ -673,10 +693,46 @@ do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 {
 	const struct fsr_info *inf = ifsr_info + fsr_fs(ifsr);
 	struct siginfo info;
+	unsigned long pc = instruction_pointer(regs);
+
+	/*
+	 * PaX: Emulate a subset of KUSER_HELPERS that are needed on some
+	 * recent userlands
+	 */
+	if (user_mode(regs)) {
+		if (pc == 0xffff0fa0UL) {
+			/*
+			 * PaX: __kuser_memory_barrier emulation
+			 */
+			// dmb(); implied by the exception
+			regs->ARM_pc = regs->ARM_lr;
+			return;
+		}
+		if (pc == 0xffff0fe0UL) {
+			/*
+			 * PaX: __kuser_get_tls emulation
+			 */
+			regs->ARM_r0 = current_thread_info()->tp_value[0];
+			regs->ARM_pc = regs->ARM_lr;
+			return;
+		}
+	}
+
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	else if (is_domain_fault(ifsr) || is_xn_fault(ifsr)) {
+		printk(KERN_EMERG "PAX: %s:%d, uid/euid: %u/%u, attempted to execute "
+		       "%s memory at %08lx\n", current->comm, task_pid_nr(current),
+			from_kuid_munged(&init_user_ns, current_uid()),
+			from_kuid_munged(&init_user_ns, current_euid()),
+			pc >= TASK_SIZE ? "non-executable kernel" : "userland", pc);
+		goto die;
+	}
+#endif
 
 	if (!inf->fn(addr, ifsr | FSR_LNX_PF, regs))
 		return;
 
+die:
 	pr_alert("Unhandled prefetch abort: %s (0x%03x) at 0x%08lx\n",
 		inf->name, ifsr, addr);
 

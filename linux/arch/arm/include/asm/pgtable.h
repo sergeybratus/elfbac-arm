@@ -56,6 +56,17 @@ extern void __pgd_error(const char *file, int line, pgd_t);
 #define pmd_ERROR(pmd)		__pmd_error(__FILE__, __LINE__, pmd)
 #define pgd_ERROR(pgd)		__pgd_error(__FILE__, __LINE__, pgd)
 
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+#include <asm/domain.h>
+#include <linux/thread_info.h>
+#include <linux/preempt.h>
+
+static inline int test_domain(int domain, int domaintype)
+{
+	return ((current_thread_info()->cpu_domain) & domain_val(domain, 3)) == domain_val(domain, domaintype);
+}
+#endif
+
 /*
  * This is the lowest virtual address we can permit any user space
  * mapping to be mapped at.  This is particularly important for

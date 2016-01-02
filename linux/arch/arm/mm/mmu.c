@@ -41,6 +41,23 @@
 #include "mm.h"
 #include "tcm.h"
 
+#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF)
+void modify_domain(unsigned int dom, unsigned int type)
+{
+	struct thread_info *thread = current_thread_info();
+	unsigned int domain = thread->cpu_domain;
+	/*
+	 * PaX: DOMAIN_MANAGER might be defined to some other value
+	 * (as it is with UDEREF), so mask off the arch-defined constant
+	 */
+	domain &= ~domain_val(dom, 3);
+	thread->cpu_domain = domain | domain_val(dom, type);
+	set_domain(thread->cpu_domain);
+}
+EXPORT_SYMBOL(modify_domain);
+#endif
+
+
 /*
  * empty_zero_page is a special page that is used for
  * zero-initialized data and COW.
@@ -291,13 +308,19 @@ static struct mem_type mem_types[] = {
 		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY |
 				L_PTE_RDONLY,
 		.prot_l1   = PMD_TYPE_TABLE,
-		.domain    = DOMAIN_USER,
+		.domain    = DOMAIN_VECTORS,
 	},
 	[MT_HIGH_VECTORS] = {
 		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY |
 				L_PTE_USER | L_PTE_RDONLY,
 		.prot_l1   = PMD_TYPE_TABLE,
-		.domain    = DOMAIN_USER,
+		/*
+		 * PaX: This change in particular is needed under UDEREF
+		 * (which maps DOMAIN_VECTORS to DOMAIN_KERNEL) as otherwise
+		 * the kernel's accesses to it would be considered direct
+		 * userland accesses and cause early faults
+		 */
+		.domain    = DOMAIN_VECTORS,
 	},
 	[MT_MEMORY_RWX] = {
 		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY,

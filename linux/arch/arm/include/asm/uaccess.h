@@ -18,6 +18,7 @@
 #include <asm/domain.h>
 #include <asm/unified.h>
 #include <asm/compiler.h>
+#include <asm/pgtable.h>
 
 #ifndef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
 #include <asm-generic/uaccess-unaligned.h>
@@ -70,10 +71,49 @@ extern int __put_user_bad(void);
 static inline void set_fs(mm_segment_t fs)
 {
 	current_thread_info()->addr_limit = fs;
-	modify_domain(DOMAIN_KERNEL, fs ? DOMAIN_CLIENT : DOMAIN_MANAGER);
+	modify_domain(DOMAIN_KERNEL, fs ? DOMAIN_KERNELCLIENT : DOMAIN_MANAGER);
 }
 
 #define segment_eq(a, b)	((a) == (b))
+
+#define __HAVE_ARCH_PAX_OPEN_USERLAND
+#define __HAVE_ARCH_PAX_CLOSE_USERLAND
+
+static inline void pax_open_userland(void)
+{
+
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	if (segment_eq(get_fs(), USER_DS)) {
+		/*
+		 * PaX: Ensure we weren't trying to open access to userland
+		 * when that access was already opened -- suggests a bug
+		 * or an active exploit
+		 */
+		BUG_ON(test_domain(DOMAIN_USER, DOMAIN_UDEREF));
+		modify_domain(DOMAIN_USER, DOMAIN_UDEREF);
+	}
+#endif
+
+}
+
+static inline void pax_close_userland(void)
+{
+
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	if (segment_eq(get_fs(), USER_DS)) {
+		/*
+		 * PaX: Similar to the above, ensure we weren't trying to
+		 * close access to userland when it was already closed.
+		 * We could use DOMAIN_USERCLIENT here (which is defined
+		 * to be the same as DOMAIN_NOACCESS under UDEREF)
+		 * but DOMAIN_NOACCESS is simply more clear.
+		 */
+		BUG_ON(test_domain(DOMAIN_USER, DOMAIN_NOACCESS));
+		modify_domain(DOMAIN_USER, DOMAIN_NOACCESS);
+	}
+#endif
+
+}
 
 #define __addr_ok(addr) ({ \
 	unsigned long flag; \
@@ -198,8 +238,12 @@ extern int __get_user_64t_4(void *);
 
 #define get_user(x, p)							\
 	({								\
+		int __e;						\
 		might_fault();						\
-		__get_user_check(x, p);					\
+		pax_open_userland();					\
+		__e = __get_user_check((x), (p));			\
+		pax_close_userland();					\
+		__e;							\
 	 })
 
 extern int __put_user_1(void *, unsigned int);
@@ -244,8 +288,12 @@ extern int __put_user_8(void *, unsigned long long);
 
 #define put_user(x, p)							\
 	({								\
+		int __e;						\
 		might_fault();						\
-		__put_user_check(x, p);					\
+		pax_open_userland();					\
+		__e = __put_user_check((x), (p));			\
+		pax_close_userland();					\
+		__e;							\
 	 })
 
 #else /* CONFIG_MMU */
@@ -269,6 +317,14 @@ static inline void set_fs(mm_segment_t fs)
 
 #endif /* CONFIG_MMU */
 
+/*
+ * PaX: On x86, PaX makes access_ok prefault all 'size' amount of memory
+ * intended to be used for a copy to reduce the race window for some
+ * "double fetch" vulnerabilities.  It provides the _noprefault version for
+ * users that are known to be safe.  Since this isn't done on ARM, just
+ * define it to the normal access_ok()
+ */
+#define access_ok_noprefault(type, addr, size) access_ok((type), (addr), (size))
 #define access_ok(type, addr, size)	(__range_ok(addr, size) == 0)
 
 #define user_addr_max() \
@@ -286,13 +342,17 @@ static inline void set_fs(mm_segment_t fs)
 #define __get_user(x, ptr)						\
 ({									\
 	long __gu_err = 0;						\
+	pax_open_userland();						\
 	__get_user_err((x), (ptr), __gu_err);				\
+	pax_close_userland();						\
 	__gu_err;							\
 })
 
 #define __get_user_error(x, ptr, err)					\
 ({									\
+	pax_open_userland();						\
 	__get_user_err((x), (ptr), err);				\
+	pax_close_userland();						\
 	(void) 0;							\
 })
 
@@ -368,13 +428,17 @@ do {									\
 #define __put_user(x, ptr)						\
 ({									\
 	long __pu_err = 0;						\
+	pax_open_userland();						\
 	__put_user_err((x), (ptr), __pu_err);				\
+	pax_close_userland();						\
 	__pu_err;							\
 })
 
 #define __put_user_error(x, ptr, err)					\
 ({									\
+	pax_open_userland();						\
 	__put_user_err((x), (ptr), err);				\
+	pax_close_userland();						\
 	(void) 0;							\
 })
 
@@ -474,18 +538,18 @@ do {									\
 
 
 #ifdef CONFIG_MMU
+/* PaX: wrap the extern user access functions with open/close calls */
 extern unsigned long __must_check ___copy_from_user(void *to, const void __user *from, unsigned long n);
 extern unsigned long __must_check ___copy_to_user(void __user *to, const void *from, unsigned long n);
-extern unsigned long __must_check __copy_to_user_std(void __user *to, const void *from, unsigned long n);
-extern unsigned long __must_check __clear_user(void __user *addr, unsigned long n);
-extern unsigned long __must_check __clear_user_std(void __user *addr, unsigned long n);
 
 static inline unsigned long __must_check __copy_from_user(void *to, const void __user *from, unsigned long n)
 {
 	unsigned long ret;
 
 	check_object_size(to, n, false);
+	pax_open_userland();
 	ret = ___copy_from_user(to, from, n);
+	pax_close_userland();
 	return ret;
 }
 
@@ -494,7 +558,22 @@ static inline unsigned long __must_check __copy_to_user(void __user *to, const v
 	unsigned long ret;
 
 	check_object_size(from, n, true);
+	pax_open_userland();
 	ret = ___copy_to_user(to, from, n);
+	pax_close_userland();
+	return ret;
+}
+
+extern unsigned long __must_check __copy_to_user_std(void __user *to, const void *from, unsigned long n);
+extern unsigned long __must_check ___clear_user(void __user *addr, unsigned long n);
+extern unsigned long __must_check __clear_user_std(void __user *addr, unsigned long n);
+
+static inline unsigned long __must_check __clear_user(void __user *addr, unsigned long n)
+{
+	unsigned long ret;
+	pax_open_userland();
+	ret = ___clear_user(addr, n);
+	pax_close_userland();
 	return ret;
 }
 

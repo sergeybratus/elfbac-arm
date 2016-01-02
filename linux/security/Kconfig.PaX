@@ -149,6 +149,18 @@ config PAX_USERCOPY
 	  accessors.  Though the whitelist of regions will be reduced over
 	  time, it notably protects important data structures like task structs.
 
+config PAX_MEMORY_UDEREF
+	bool "Prevent invalid userland pointer dereference"
+	depends on ARM && (CPU_V6 || CPU_V6K || CPU_V7) && !ARM_LPAE
+	help
+	  By saying Y here the kernel will be prevented from dereferencing
+	  userland pointers in contexts where the kernel expects only kernel
+	  pointers.  This is both a useful runtime debugging feature and a
+	  security measure that prevents exploiting a class of kernel bugs.
+
+	  On ARM this feature has negligible impact, though only non-LPAE
+	  configurations are currently supported.
+
 endmenu
 
 endmenu

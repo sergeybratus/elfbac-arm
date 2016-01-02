@@ -48,18 +48,65 @@
  * Domain types
  */
 #define DOMAIN_NOACCESS	0
-#define DOMAIN_CLIENT	1
+/*
+ * PaX: Removed so we can be certain we replaced all uses of
+ * DOMAIN_CLIENT in the kernel
+ */
+//#define DOMAIN_CLIENT	1
+
 #ifdef CONFIG_CPU_USE_DOMAINS
-#define DOMAIN_MANAGER	3
+#define DOMAIN_USERCLIENT	1 /* perm-honoring access allowed */
+#define DOMAIN_KERNELCLIENT	1 /* perm-honoring access allowed */
+/*
+ * PaX: Upstream's CPU_USE_DOMAINS use results in userland memory
+ * accesses using instruction variants that act as if the access
+ * is being performed by userland code itself.  Since the same
+ * copy_*_user code is used in both KERNEL_DS mode and USER_DS mode
+ * this results in these "userland" variants being used for kernel
+ * to kernel copies.  This of course won't work with permission-honoring
+ * domain access values, so they use a mode where any page table permissions
+ * are ignored.  This causes a side effect of kernel to kernel copies
+ * being allowed to modify read-only kernel memory, something we don't
+ * want to allow in PaX.  Therefore, we force CONFIG_CPU_USE_DOMAINS
+ * to be disabled but make use of some of the infrastructure it provides.
+ */
+#define DOMAIN_MANAGER		3 /* perm-ignoring access allowed */
 #else
-#define DOMAIN_MANAGER	1
+
+#define DOMAIN_MANAGER		1 /* perm-honoring access allowed */
+
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+/* PaX: Domain Access Values */
+/* Under UDEREF the default access for userland memory is no access */
+#define DOMAIN_USERCLIENT	0 /* no access */
+/*
+ * Between pax_open/close_userland calls, this access to userland will
+ * be provided
+ */
+#define DOMAIN_UDEREF		1 /* perm-honoring access allowed */
+/*
+ * PaX: We won't map the vectors into userland when
+ * PAX_OLD_ARM_USERLAND is disabled
+ * Unlike the above, this is DACR index rather than a value
+ * for a particular DACR index
+ */
+#define DOMAIN_VECTORS		DOMAIN_KERNEL
+#else
+/* PaX: Default access for userland memory */
+#define DOMAIN_USERCLIENT	1 /* perm-honoring access allowed */
+#define DOMAIN_VECTORS		DOMAIN_USER
+#endif
+
+/* PaX: Default access for kernel memory */
+#define DOMAIN_KERNELCLIENT	1 /* perm-honoring access allowed */
+
 #endif
 
 #define domain_val(dom,type)	((type) << (2*(dom)))
 
 #ifndef __ASSEMBLY__
 
-#ifdef CONFIG_CPU_USE_DOMAINS
+#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF)
 static inline void set_domain(unsigned val)
 {
 	asm volatile(
@@ -68,15 +115,7 @@ static inline void set_domain(unsigned val)
 	isb();
 }
 
-#define modify_domain(dom,type)					\
-	do {							\
-	struct thread_info *thread = current_thread_info();	\
-	unsigned int domain = thread->cpu_domain;		\
-	domain &= ~domain_val(dom, DOMAIN_MANAGER);		\
-	thread->cpu_domain = domain | domain_val(dom, type);	\
-	set_domain(thread->cpu_domain);				\
-	} while (0)
-
+extern void modify_domain(unsigned int dom, unsigned int type);
 #else
 static inline void set_domain(unsigned val) { }
 static inline void modify_domain(unsigned dom, unsigned type)	{ }
