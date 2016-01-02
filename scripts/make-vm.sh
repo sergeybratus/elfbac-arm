@@ -13,7 +13,7 @@ sudo mkfs.ext4 -O ^huge_file /dev/nbd0p1
 
 mkdir rootfs
 sudo mount /dev/nbd0p1 rootfs
-sudo debootstrap --arch=armhf --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg --include openssh-server,gdb,strace --verbose --foreign trusty rootfs
+sudo debootstrap --arch=armhf --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg --include openssh-server,gdb,strace --verbose --foreign vivid rootfs
 
 # Provision new system
 echo "proc              /proc   proc    nodev,noexec,nosuid         0 0" | sudo tee rootfs/etc/fstab

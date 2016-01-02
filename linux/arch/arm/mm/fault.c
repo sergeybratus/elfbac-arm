@@ -241,7 +241,8 @@ static inline bool access_error(unsigned int fsr, struct vm_area_struct *vma)
 
 static int __kprobes
 __do_page_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
-		unsigned int flags, struct task_struct *tsk)
+		unsigned int flags, struct task_struct *tsk,
+		struct pt_regs *regs)
 {
 	struct vm_area_struct *vma;
 	int fault;
@@ -265,13 +266,12 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		unsigned long sflags;
+		unsigned long elfbac_access_flags, sflags;
 		struct elfbac_state *next_state;
+		u64 asid;
 
 		/* From access_error above */
-		unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
-
-		printk("PAGE FAULT addr: %lx, fsr: %x, flags: %x\n", addr, fsr, flags);
+		unsigned int mask = VM_READ;
 
 		if (fsr & FSR_WRITE)
 			mask = VM_WRITE;
@@ -282,28 +282,40 @@ good_area:
 
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, &next_state) &&
-		    !(vma->vm_flags & VM_GROWSDOWN)) {
-			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-			goto out;
-		}
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, regs->ARM_lr,
+				      &next_state, &elfbac_access_flags)) {
+			if ((vma->vm_flags & VM_GROWSDOWN)) {
+				elfbac_access_flags = VM_READ | VM_WRITE;
+			} else if (!vma->vm_file || addr > mm->start_stack) {
+				// We don't label anonymous pages from mmap, so forward their
+				// permissions to all states. Also handle vdso pages above stack.
+				elfbac_access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
+			} else {
+				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, mask: %x\n",
+				       mm->elfbac_policy->current_state->id, addr, regs->ARM_pc, mask);
 
-		if (next_state) {
-			mm->elfbac_policy->current_state = next_state;
-			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-			return 0;
+				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+				goto out;
+			}
 		}
 
 		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
-		if (fault != 0) {
-			spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
-			goto out;
+
+		if (next_state) {
+			mm->elfbac_policy->current_state = next_state;
+
+			asid = atomic64_read(&mm->elfbac_policy->current_state->context.id);
+			atomic64_set(&mm->context.id, asid);
 		}
 
-		printk("Doing ELFBAC copy\n");
+		if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, elfbac_access_flags) != 0)
+			fault = VM_FAULT_BADACCESS;
 
-		fault = elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr);
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
+
+		if (next_state)
+			switch_mm(NULL, current->mm, current);
+
 		goto out;
 	} else {
 		return handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
@@ -375,7 +387,7 @@ retry:
 #endif
 	}
 
-	fault = __do_page_fault(mm, addr, fsr, flags, tsk);
+	fault = __do_page_fault(mm, addr, fsr, flags, tsk, regs);
 
 	/* If we need to retry but a fatal signal is pending, handle the
 	 * signal first. We do not need to release the mmap_sem because

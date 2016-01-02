@@ -106,14 +106,17 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
             flags |= (0x4 if 'x' in section['flags'] else 0)
 
             name = section.get('name', state['name'])
-            section_name = [None, '.rodata.', '.data', '.data.', None, '.text.', None, None][flags] + name
-            if section['flags'] == 'rw' and is_bss(section['description']):
-                section_name = '.bss.' + state['name']
+            if section.get('create', True):
+                name = [None, '.rodata.', '.data', '.data.', None, '.text.', None, None][flags] + name
+                if section['flags'] == 'rw' and is_bss(section['description']):
+                    name = '.bss.' + state['name']
 
-            base, size = section_map.get(section_name, (0, 0))
+            base, size = section.get('base'), section.get('size')
+            if not base or not size:
+                base, size = section_map.get(name, (0, 0))
 
             if verbose:
-                print '\t%s: %08x->%08x, %x' % (section_name, base, base + size, flags)
+                print '\t%s: %08x->%08x, %x' % (name, base, base + size, flags)
 
             chunks.append(struct.pack('<IIII', SECTION, base, size, flags))
 
@@ -131,7 +134,7 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
             base = symbol_map.get(base_symbol, 0)
 
         if must_resolve and not base:
-            raise KeyError('Error resolving section %s' % section_name)
+            raise KeyError('Error resolving call transition at %s' % base_symbol)
 
         flags = 0
         flags |= (0x1 if 'r' in transition['flags'] else 0)
@@ -160,7 +163,7 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
             address = symbol_map.get(address_symbol, 0)
 
         if must_resolve and not address:
-            raise KeyError('Error resolving section %s' % section_name)
+            raise KeyError('Error resolving data transition at %s' % address_symbol)
 
         if verbose:
             print 'Call Transition from %08x->%08x on %x,%x,%x' % (from_state, to_state,

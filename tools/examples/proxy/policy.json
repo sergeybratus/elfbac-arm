@@ -1,0 +1,24 @@
+{
+    "states": [
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "description": "*(.text*)", "flags": "rx" },
+                { "name": ".iplt", "create": false, "flags": "rx" },
+                { "description": "*(.rodata*)", "flags": "r" },
+                { "name": ".rel.dyn", "create": false, "flags": "r" },
+                { "description": "*(.data*)", "flags": "rw" },
+                { "name": ".data.rel.ro", "create": false, "flags": "rw" },
+                { "name": ".got", "create": false, "flags": "rw" },
+                { "name": ".tdata", "create": false, "flags": "rw" },
+                { "name": ".data.brk", "create": false, "flags": "rw", "base": 1995497472, "size": 4096 },
+                { "name": "libc", "description": "*(__libc*)",  "flags": "rw" },
+                { "description": "*(.bss*) *(COMMON)", "flags": "rw" },
+                { "name": ".tbss", "create": false, "flags": "rw" }
+            ]
+        }
+    ],
+    "call_transitions": [
+    ]
+}
