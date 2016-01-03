@@ -713,6 +713,9 @@ hook_ifault_code(int nr, int (*fn)(unsigned long, unsigned int, struct pt_regs *
 	ifsr_info[nr].name = name;
 }
 
+asmlinkage int sys_sigreturn(struct pt_regs *regs);
+asmlinkage int sys_rt_sigreturn(struct pt_regs *regs);
+
 asmlinkage void __exception
 do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 {
@@ -725,6 +728,24 @@ do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 	 * recent userlands
 	 */
 	if (user_mode(regs)) {
+		unsigned long sigpage = current->mm->context.sigpage;
+
+		/*
+		 * PaX: There are 7 sigreturn codes, so we end up
+		 * with a range userland can attempt to trigger from
+		 * the sigpage to sigpage + 7 * size of each code (4)
+		 * As seen in arch/arm/kernel/sigreturn_codes.S, the
+		 * first 3 entries are to call sigreturn, and the remaining
+		 * are used to call rt_sigreturn
+		 */
+
+		if (sigpage <= pc && pc < sigpage + 7*4) {
+			if (pc < sigpage + 3*4)
+				sys_sigreturn(regs);
+			else
+				sys_rt_sigreturn(regs);
+			return;
+		}
 		if (pc == 0xffff0fa0UL) {
 			/*
 			 * PaX: __kuser_memory_barrier emulation
