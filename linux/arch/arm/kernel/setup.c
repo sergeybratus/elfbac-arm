@@ -105,7 +105,6 @@ EXPORT_SYMBOL(elf_hwcap);
 unsigned int elf_hwcap2 __read_mostly;
 EXPORT_SYMBOL(elf_hwcap2);
 
-
 #ifdef MULTI_CPU
 struct processor processor __read_mostly;
 #endif

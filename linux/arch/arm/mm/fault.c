@@ -28,6 +28,7 @@
 #include <asm/tlbflush.h>
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
+#include <asm/sections.h>
 
 #include "fault.h"
 
@@ -159,6 +160,18 @@ __do_kernel_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 		       from_kuid_munged(&init_user_ns, current_uid()),
 		       from_kuid_munged(&init_user_ns, current_euid()), addr);
 #endif
+
+#ifdef CONFIG_PAX_KERNEXEC
+	/* PaX: handles attempted kernel code modification: see vmlinux.lds.S */
+	if ((fsr & FSR_WRITE) &&
+	    (((unsigned long)_stext <= addr && addr < init_mm.end_code) ||
+	     (MODULES_VADDR <= addr && addr < MODULES_END)))
+		printk(KERN_EMERG "PAX: %s:%d, uid/euid: %u/%u, attempted to modify "
+		       "kernel code at %08lx\n", current->comm, task_pid_nr(current),
+		       from_kuid_munged(&init_user_ns, current_uid()),
+		       from_kuid_munged(&init_user_ns, current_euid()), addr);
+#endif
+
 
 	/*
 	 * No handler, we'll have to terminate things with extreme prejudice.
@@ -730,7 +743,7 @@ do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 		}
 	}
 
-#ifdef CONFIG_PAX_MEMORY_UDEREF
+#if defined(CONFIG_PAX_MEMORY_UDEREF) || defined(CONFIG_PAX_KERNEXEC)
 	else if (is_domain_fault(ifsr) || is_xn_fault(ifsr)) {
 		printk(KERN_EMERG "PAX: %s:%d, uid/euid: %u/%u, attempted to execute "
 		       "%s memory at %08lx\n", current->comm, task_pid_nr(current),

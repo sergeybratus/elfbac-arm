@@ -75,6 +75,15 @@
 
 #define DOMAIN_MANAGER		1 /* perm-honoring access allowed */
 
+#ifdef CONFIG_PAX_KERNEXEC
+/*
+ * PaX: The below value is used to allow temporary write access to
+ * read-only data for the current CPU between pax_open/close_kernel
+ * calls
+ */
+#define DOMAIN_KERNEXEC		3 /* perm-ignoring access allowed */
+#endif
+
 #ifdef CONFIG_PAX_MEMORY_UDEREF
 /* PaX: Domain Access Values */
 /* Under UDEREF the default access for userland memory is no access */
@@ -106,7 +115,8 @@
 
 #ifndef __ASSEMBLY__
 
-#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF)
+#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF) || \
+    defined(CONFIG_PAX_KERNEXEC)
 static inline void set_domain(unsigned val)
 {
 	asm volatile(

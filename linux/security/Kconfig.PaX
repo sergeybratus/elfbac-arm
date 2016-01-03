@@ -47,6 +47,19 @@ config PAX_PAGEEXEC
 	  On ARM with hardware XN support there is no performance
 	  impact.
 
+config PAX_KERNEXEC
+	bool "Enforce non-executable kernel pages"
+	depends on ARM && (CPU_V6 || CPU_V6K || CPU_V7) && !ARM_LPAE
+	select ARM_KERNMEM_PERMS
+	help
+	  This is the kernel land equivalent of PAGEEXEC and MPROTECT,
+	  that is, enabling this option will make it harder to inject
+	  and execute 'foreign' code in kernel memory itself.
+
+	  On ARM this option is not supported on LPAE, as it lacks an
+	  easy method to implement temporary write access to kernel
+	  memory on a per-CPU basis.
+
 config PAX_MPROTECT
 	bool "Restrict mprotect()"
 	depends on PAX_PAGEEXEC

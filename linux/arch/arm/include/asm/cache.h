@@ -24,5 +24,12 @@
 #endif
 
 #define __read_mostly __attribute__((__section__(".data..read_mostly")))
+/*
+ * PaX: The below attribute is used to mark data that is writable only
+ * during init.  Once init is complete and we transfer control to userland
+ * after free_initmem(), any data with this attribute is made read-only
+ * when PAX_KERNEXEC is enabled.
+ */
+#define __read_only __attribute__ ((__section__(".data..read_only")))
 
 #endif

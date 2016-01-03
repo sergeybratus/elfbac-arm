@@ -128,10 +128,17 @@ do { \
 /*
  * Modules have no business playing preemption tricks.
  */
+#ifndef CONFIG_PAX_KERNEXEC
+/*
+ * PaX: Allow these under KERNEXEC, as our pax_close_kernel() for instance
+ * makes use of the preempt_enable_no_resched() variant for performance
+ * reasons and we want to make sure that works
+ */
 #undef sched_preempt_enable_no_resched
 #undef preempt_enable_no_resched
 #undef preempt_enable_no_resched_notrace
 #undef preempt_check_resched
+#endif
 #endif
 
 #define preempt_set_need_resched() \

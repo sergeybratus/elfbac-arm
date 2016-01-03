@@ -55,21 +55,29 @@
  * when exiting back out of whatever caused us to (re)enter the kernel
  */
 	.macro pax_enter_kernel
-#ifdef CONFIG_PAX_MEMORY_UDEREF
+#if defined(CONFIG_PAX_MEMORY_UDEREF) || defined(CONFIG_PAX_KERNEXEC)
 	@ make aligned space for saved DACR
 	sub	sp, sp, #8
 	@ save regs
 	stmdb	sp!, {r1, r2}
 	@ read DACR from cpu_domain into r1
 	mov	r2, sp
-	@ assume 8K pages, since we have to split the immediate in two
+	@ assume 8K kernel stacks, since we have to split the immediate in two
 	bic	r2, r2, #(0x1fc0)
 	bic	r2, r2, #(0x3f)
+	@ thread_info is located at the base of the kernel stack, r2 points to it now
 	ldr	r1, [r2, #TI_CPU_DOMAIN]
 	@ store old DACR on stack
 	str	r1, [sp, #8]
-	@ set current DOMAIN_USER to DOMAIN_NOACCESS
+#ifdef CONFIG_PAX_KERNEXEC
+	@ set type of DOMAIN_KERNEL to DOMAIN_KERNELCLIENT
+	bic	r1, r1, #(domain_val(DOMAIN_KERNEL, 3))
+	orr	r1, r1, #(domain_val(DOMAIN_KERNEL, DOMAIN_KERNELCLIENT))
+#endif
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	@ set current DOMAIN_USER to DOMAIN_NOACCESS (set to 0 by clearing)
 	bic	r1, r1, #(domain_val(DOMAIN_USER, 3))
+#endif
 	@ write r1 to current_thread_info()->cpu_domain
 	str	r1, [r2, #TI_CPU_DOMAIN]
 	@ write r1 to DACR
@@ -254,7 +262,7 @@ ENDPROC(__und_invalid)
 	ldmia	r0, {r3 - r5}
 	add	r7, sp, #S_SP - 4	@ here for interlock avoidance
 	mov	r6, #-1			@  ""  ""      ""       ""
-#ifdef CONFIG_PAX_MEMORY_UDEREF
+#if defined(CONFIG_PAX_MEMORY_UDEREF) || defined(CONFIG_PAX_KERNEXEC)
 	@ offset sp by 8 as done in pax_enter_kernel
 	add	r2, sp, #(S_FRAME_SIZE + \stack_hole + 4)
 #else
@@ -874,7 +882,8 @@ ENTRY(__switch_to)
  THUMB(	str	lr, [ip], #4		   )
 	ldr	r4, [r2, #TI_TP_VALUE]
 	ldr	r5, [r2, #TI_TP_VALUE + 4]
-#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF)
+#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF) || \
+    defined(CONFIG_PAX_KERNEXEC)
 	ldr	r6, [r2, #TI_CPU_DOMAIN]
 #endif
 	switch_tls r1, r4, r5, r3, r7
@@ -883,7 +892,8 @@ ENTRY(__switch_to)
 	ldr	r8, =__stack_chk_guard
 	ldr	r7, [r7, #TSK_STACK_CANARY]
 #endif
-#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF)
+#if defined(CONFIG_CPU_USE_DOMAINS) || defined(CONFIG_PAX_MEMORY_UDEREF) || \
+    defined(CONFIG_PAX_KERNEXEC)
 	mcr	p15, 0, r6, c3, c0, 0		@ Set domain register
 #endif
 	mov	r5, r0

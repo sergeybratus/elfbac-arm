@@ -34,6 +34,13 @@
 #endif
 
 /*
+ * PaX: For compatibility with logical<->linear address conversions
+ * present in non-arch directories
+ */
+#define ktla_ktva(addr)		(addr)
+#define ktva_ktla(addr)		(addr)
+
+/*
  * Just any arbitrary offset to the start of the vmalloc VM area: the
  * current 8MB value just means that there will be a 8MB "hole" after the
  * physical memory until the kernel virtual memory starts.  That means that
@@ -56,7 +63,7 @@ extern void __pgd_error(const char *file, int line, pgd_t);
 #define pmd_ERROR(pmd)		__pmd_error(__FILE__, __LINE__, pmd)
 #define pgd_ERROR(pgd)		__pgd_error(__FILE__, __LINE__, pgd)
 
-#ifdef CONFIG_PAX_MEMORY_UDEREF
+#if defined(CONFIG_PAX_KERNEXEC) || defined(CONFIG_PAX_MEMORY_UDEREF)
 #include <asm/domain.h>
 #include <linux/thread_info.h>
 #include <linux/preempt.h>
@@ -66,6 +73,44 @@ static inline int test_domain(int domain, int domaintype)
 	return ((current_thread_info()->cpu_domain) & domain_val(domain, 3)) == domain_val(domain, domaintype);
 }
 #endif
+
+#define __HAVE_ARCH_PAX_OPEN_KERNEL
+#define __HAVE_ARCH_PAX_CLOSE_KERNEL
+
+/* PaX:
+ * unsigned long purely to retain compatibility with PaX on other
+ * architectures.  On ARM we don't use the return value.
+ */
+static inline unsigned long pax_open_kernel(void)
+{
+#ifdef CONFIG_PAX_KERNEXEC
+	preempt_disable();
+	/*
+	 * PaX: Ensure that if we're about to allow write access to
+	 * read-only kernel memory that we're not currently allowing
+	 * it.  It suggests either a bug or an active exploit.
+	 */
+	BUG_ON(test_domain(DOMAIN_KERNEL, DOMAIN_KERNEXEC));
+	modify_domain(DOMAIN_KERNEL, DOMAIN_KERNEXEC);
+#endif
+	return 0;
+}
+
+static inline unsigned long pax_close_kernel(void)
+{
+#ifdef CONFIG_PAX_KERNEXEC
+	/*
+	 * PaX: Similar to the above, ensure that if we're trying
+	 * to switch back to honoring kernel memory permissions that
+	 * we haven't already done so.
+	 */
+	BUG_ON(test_domain(DOMAIN_KERNEL, DOMAIN_KERNELCLIENT));
+	modify_domain(DOMAIN_KERNEL, DOMAIN_KERNELCLIENT);
+	/* PaX: Pairs with the preempt_disable() in pax_open_kernel() */
+	preempt_enable_no_resched();
+#endif
+	return 0;
+}
 
 /*
  * This is the lowest virtual address we can permit any user space

@@ -36,7 +36,7 @@
 	@ assume 8K kernel stacks, since we have to split the immediate in two
 	bic	r2, r2, #(0x1fc0)
 	bic	r2, r2, #(0x3f)
-	@ thread_info appears at the base of the kernel stack, r1 now points to it
+	@ thread_info appears at the base of the kernel stack, r2 now points to it
 	ldr	r1, [r2, #TI_CPU_DOMAIN]
 	@ set current DOMAIN_USER to DOMAIN_UDEREF
 	bic	r1, r1, #(domain_val(DOMAIN_USER, 3))

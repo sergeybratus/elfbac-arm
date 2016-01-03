@@ -715,9 +715,54 @@ void free_tcmmem(void)
 #endif
 }
 
+void pax_apply_perms(void)
+{
+#ifdef CONFIG_PAX_KERNEXEC
+	unsigned long addr;
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	int cpu_arch = cpu_architecture();
+	unsigned int cr = get_cr();
+
+	/* PaX: Don't apply strict permissions to CPUs that can't handle them */
+	if (cpu_arch < CPU_ARCH_ARMv6 || !(cr & CR_XP))
+		return;
+
+	/* make pages tables, etc before .text NX */
+	for (addr = PAGE_OFFSET; addr < (unsigned long)_stext; addr += SECTION_SIZE) {
+		pgd = pgd_offset_k(addr);
+		pud = pud_offset(pgd, addr);
+		pmd = pmd_offset(pud, addr);
+		__section_update(pmd, addr, PMD_SECT_XN);
+	}
+	/* make init NX */
+	for (addr = (unsigned long)__init_begin; addr < (unsigned long)_sdata; addr += SECTION_SIZE) {
+		pgd = pgd_offset_k(addr);
+		pud = pud_offset(pgd, addr);
+		pmd = pmd_offset(pud, addr);
+		__section_update(pmd, addr, PMD_SECT_XN);
+	}
+	/* make kernel code/rodata RX */
+	for (addr = (unsigned long)_stext; addr < (unsigned long)__init_begin; addr += SECTION_SIZE) {
+		pgd = pgd_offset_k(addr);
+		pud = pud_offset(pgd, addr);
+		pmd = pmd_offset(pud, addr);
+#ifdef CONFIG_ARM_LPAE
+		/* only use PMD_SECT_RDONLY on LPAE as we define it to 0 otherwise */
+		__section_update(pmd, addr, PMD_SECT_RDONLY);
+#else
+		/* on !LPAE this odd combination actually makes things read-only */
+		__section_update(pmd, addr, PMD_SECT_APX|PMD_SECT_AP_WRITE);
+#endif
+	}
+#endif
+}
+
 void free_initmem(void)
 {
 	fix_kernmem_perms();
+	pax_apply_perms();
 	free_tcmmem();
 
 	poison_init_mem(__init_begin, __init_end - __init_begin);

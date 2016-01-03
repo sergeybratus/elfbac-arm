@@ -600,7 +600,7 @@ config CPU_CP15_MPU
 
 config CPU_USE_DOMAINS
 	bool
-	depends on !ARM_LPAE && !PAX_MEMORY_UDEREF
+	depends on !ARM_LPAE && !PAX_MEMORY_UDEREF && !PAX_KERNEXEC
 	help
 	  This option enables or disables the use of domain switching
 	  via the set_fs() function.
@@ -1030,7 +1030,7 @@ config ARM_KERNMEM_PERMS
 
 config DEBUG_RODATA
 	bool "Make kernel text and rodata read-only"
-	depends on ARM_KERNMEM_PERMS
+	depends on ARM_KERNMEM_PERMS && BROKEN
 	default y
 	help
 	  If this is set, kernel text and rodata will be made read-only. This

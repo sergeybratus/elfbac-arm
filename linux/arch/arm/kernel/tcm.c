@@ -61,7 +61,7 @@ static struct map_desc itcm_iomap[] __initdata = {
 		.virtual	= ITCM_OFFSET,
 		.pfn		= __phys_to_pfn(ITCM_OFFSET),
 		.length		= 0,
-		.type		= MT_MEMORY_RWX_ITCM,
+		.type		= MT_MEMORY_RX_ITCM,
 	}
 };
 
@@ -235,7 +235,9 @@ void __init tcm_init(void)
 		start = &__sdtcm_data;
 		end   = &__edtcm_data;
 		ram   = &__dtcm_start;
+		pax_open_kernel();
 		memcpy(start, ram, dtcm_code_sz);
+		pax_close_kernel();
 		pr_debug("CPU DTCM: copied data from %p - %p\n",
 			 start, end);
 		dtcm_present = true;
