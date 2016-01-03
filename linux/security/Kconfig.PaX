@@ -174,6 +174,23 @@ config PAX_MEMORY_UDEREF
 	  On ARM this feature has negligible impact, though only non-LPAE
 	  configurations are currently supported.
 
+config PAX_CONSTIFY_PLUGIN
+	bool "Automatically constify eligible structures"
+	depends on PAX_KERNEXEC
+	help
+	  By saying Y here the compiler will automatically constify a class
+	  of types that contain only function pointers.  This reduces the
+	  kernel's attack surface and also produces a better memory layout.
+
+	  Note that the implementation requires a gcc with plugin support,
+	  i.e., gcc 4.5 or newer.  You may need to install the supporting
+	  headers explicitly in addition to the normal gcc package.
+
+	  Note that if some code really has to modify constified variables
+	  then the source code will have to be patched to allow it.  Examples
+	  can be found in PaX itself (the no_const attribute) and for some
+	  out-of-tree modules at http://www.grsecurity.net/~paxguy1/ .
+
 config PAX_OLD_ARM_USERLAND
 	bool "Old ARM userland compatibility"
 	depends on ARM && (CPU_V6 || CPU_V6K || CPU_V7)
