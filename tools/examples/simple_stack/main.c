@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include "libc.h"
 
 __attribute__((section(".data.buf")))

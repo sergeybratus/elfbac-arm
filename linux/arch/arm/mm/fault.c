@@ -259,11 +259,12 @@ good_area:
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		unsigned long elfbac_access_flags, sflags;
+		unsigned long sflags, access_flags, copy_size;
 		struct elfbac_state *next_state;
 		u64 asid;
 		int is_stack = 0;
 		pgd_t *src_pgd, *orig_pgd;
+		unsigned char *copy_page = NULL;
 
 		/* From access_error above */
 		unsigned int mask = VM_READ;
@@ -278,14 +279,14 @@ good_area:
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
 		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, regs->ARM_lr,
-				      &next_state, &elfbac_access_flags)) {
+				      &next_state, &access_flags, &copy_size)) {
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
-				elfbac_access_flags = VM_READ | VM_WRITE;
+				access_flags = VM_READ | VM_WRITE;
 				is_stack = 1;
 			} else if (!vma->vm_file || addr > mm->start_stack) {
 				// We don't label anonymous pages from mmap, so forward their
 				// permissions to all states. Also handle vdso pages above stack.
-				elfbac_access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
+				access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
 			} else {
 				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, mask: %x\n",
 				       mm->elfbac_policy->current_state->id, addr, regs->ARM_pc, mask);
@@ -296,10 +297,23 @@ good_area:
 		}
 
 		if (next_state) {
+			if (copy_size) {
+				fault = VM_FAULT_OOM;
+				copy_page = (unsigned char *)__get_free_page(GFP_TEMPORARY);
+				if (!copy_page)
+					goto out;
+
+				fault = VM_FAULT_BADACCESS;
+				if (copy_from_user(copy_page, (const void __user *)regs->ARM_sp,
+						   copy_size) != 0)
+					goto out;
+			}
+
 			mm->elfbac_policy->current_state = next_state;
 
 			asid = atomic64_read(&mm->elfbac_policy->current_state->context.id);
 			atomic64_set(&mm->context.id, asid);
+
 		}
 
 		if (is_stack) {
@@ -315,13 +329,22 @@ good_area:
 		}
 
 		if (elfbac_copy_mapping(mm, mm->elfbac_policy->current_state->pgd, src_pgd,
-					vma, addr, elfbac_access_flags) != 0)
+					vma, addr, access_flags) != 0)
 			fault = VM_FAULT_BADACCESS;
 
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 
-		if (next_state)
+		if (next_state) {
 			switch_mm(NULL, current->mm, current);
+
+			if (copy_size && copy_page) {
+				if (copy_to_user((void __user *)regs->ARM_sp, copy_page,
+						   copy_size) != 0)
+					goto out;
+
+				free_page((unsigned long)copy_page);
+			}
+		}
 
 		goto out;
 	} else {

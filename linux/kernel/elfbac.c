@@ -487,6 +487,10 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 		if (call_transition->from > num_states ||
 		    call_transition->to > num_states)
 			return -EINVAL;
+
+		if (call_transition->param_size > PAGE_SIZE ||
+		    call_transition->return_size > PAGE_SIZE)
+			return -EINVAL;
 	}
 
 	return 0;
@@ -553,6 +557,8 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			}
 
 			state->id = cur_state_id++;
+			state->return_addr = 0;
+			state->return_size = 0;
 			state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
 
 			memset(&state->context, 0, sizeof(mm_context_t));
@@ -834,7 +840,8 @@ static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsign
 
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		      unsigned int mask, unsigned long lr,
-		      struct elfbac_state **next_state, unsigned long *flags)
+		      struct elfbac_state **next_state, unsigned long *flags,
+		      unsigned long *copy_size)
 {
 	unsigned long start, end;
 	struct elfbac_state *state;
@@ -842,8 +849,9 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	struct elfbac_data_transition *data_transition;
 	struct elfbac_call_transition *call_transition;
 
-	*flags = 0;
 	*next_state = NULL;
+	*flags = 0;
+	*copy_size = 0;
 
 	// Check for return from a call transition
 	// TODO: Need 1 return_state_id per state per task for shared policies
@@ -851,8 +859,11 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	    policy->current_state->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
 		state = get_state_by_id(policy, policy->current_state->return_state_id);
 		if (state) {
-			policy->current_state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
+			*copy_size = policy->current_state->return_size;
 			*next_state = state;
+			policy->current_state->return_addr = 0;
+			policy->current_state->return_size = 0;
+			policy->current_state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
 			goto good_transition;
 		}
 	}
@@ -878,9 +889,11 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					continue;
 
 				if (call_transition->addr == addr) {
-					state->return_state_id = policy->current_state->id;
-					state->return_addr = lr;
 					*next_state = state;
+					*copy_size = call_transition->param_size;
+					state->return_addr = lr;
+					state->return_size = call_transition->return_size;
+					state->return_state_id = policy->current_state->id;
 					goto good_transition;
 				}
 			}
