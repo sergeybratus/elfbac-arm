@@ -262,6 +262,8 @@ good_area:
 		unsigned long elfbac_access_flags, sflags;
 		struct elfbac_state *next_state;
 		u64 asid;
+		int is_stack = 0;
+		pgd_t *src_pgd, *orig_pgd;
 
 		/* From access_error above */
 		unsigned int mask = VM_READ;
@@ -279,6 +281,7 @@ good_area:
 				      &next_state, &elfbac_access_flags)) {
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
 				elfbac_access_flags = VM_READ | VM_WRITE;
+				is_stack = 1;
 			} else if (!vma->vm_file || addr > mm->start_stack) {
 				// We don't label anonymous pages from mmap, so forward their
 				// permissions to all states. Also handle vdso pages above stack.
@@ -292,8 +295,6 @@ good_area:
 			}
 		}
 
-		fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
-
 		if (next_state) {
 			mm->elfbac_policy->current_state = next_state;
 
@@ -301,7 +302,20 @@ good_area:
 			atomic64_set(&mm->context.id, asid);
 		}
 
-		if (elfbac_copy_mapping(mm->elfbac_policy, mm, vma, addr, elfbac_access_flags) != 0)
+		if (is_stack) {
+			orig_pgd = mm->pgd;
+			src_pgd = mm->elfbac_policy->stacks[mm->elfbac_policy->current_state->stack_id];
+
+			mm->pgd = src_pgd;
+			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
+			mm->pgd = orig_pgd;
+		} else {
+			src_pgd = mm->pgd;
+			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
+		}
+
+		if (elfbac_copy_mapping(mm, mm->elfbac_policy->current_state->pgd, src_pgd,
+					vma, addr, elfbac_access_flags) != 0)
 			fault = VM_FAULT_BADACCESS;
 
 		spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);

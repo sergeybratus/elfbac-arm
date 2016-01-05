@@ -9,9 +9,10 @@
 
 /* Define an upper bound on policy size to prevent exhausting kernel resources,
  * can re-examine this later. */
-#define ELFBAC_POLICY_SIZE_MAX (PAGE_SIZE * 10)
+#define ELFBAC_POLICY_SIZE_MAX (PAGE_SIZE)
+#define ELFBAC_NUM_STATES_MAX (0xff)
+#define ELFBAC_UNDEFINED_STATE_ID (ULONG_MAX)
 #define PT_ELFBAC_POLICY (PT_LOOS + 0xfe7fbac)
-#define UNDEFINED_STATE_ID (ULONG_MAX)
 
 struct elfbac_state {
 	unsigned long id;
@@ -50,12 +51,13 @@ struct elfbac_call_transition {
 };
 
 struct elfbac_policy {
+	spinlock_t lock;
+	struct elfbac_state *current_state;
 	struct list_head states_list;
 	struct list_head data_transitions_list;
 	struct list_head call_transitions_list;
-	spinlock_t lock;
 	unsigned long num_stacks;
-	struct elfbac_state *current_state;
+	pgd_t **stacks;
 };
 
 int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
@@ -63,11 +65,10 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy);
 int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig,
 		struct elfbac_policy *new);
-int elfbac_mm_is_present(struct mm_struct *mm, unsigned long addr);
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		unsigned int mask, unsigned long lr,
 		struct elfbac_state **next_state, unsigned long *flags);
-int elfbac_copy_mapping(struct elfbac_policy *policy, struct mm_struct *mm,
+int elfbac_copy_mapping(struct mm_struct *mm, pgd_t *dst_pgd, pgd_t *src_pgd,
 		struct vm_area_struct *vma, unsigned long addr,
 		unsigned long flags);
 

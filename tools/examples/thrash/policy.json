@@ -49,22 +49,22 @@
             "from": "start",
             "to": "read",
             "address": "read",
-            "param_size": 12,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         },
         {
             "from": "start",
             "to": "write",
             "address": "write",
-            "param_size": 12,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         },
         {
             "from": "start",
             "to": "exit",
             "address": "_exit",
-            "param_size": 4,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         }
     ]
 }

@@ -15,7 +15,7 @@
             "name": "libc",
             "stack": "stack",
             "sections" : [
-                { "name": "buf", "create": false, "description": "*main.o(.data.buf)", "flags": "rw" },
+                { "name": ".data.buf", "create": false, "flags": "rw" },
                 { "description": "*libc.o(.text*)", "flags": "rx" },
                 { "description": "*libc.o(.rodata*)", "flags": "r" },
                 { "description": "*libc.o(.data*)", "flags": "rw" },
@@ -28,22 +28,22 @@
             "from": "start",
             "to": "libc",
             "address": "read",
-            "param_size": 12,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         },
         {
             "from": "start",
             "to": "libc",
             "address": "write",
-            "param_size": 12,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         },
         {
             "from": "start",
             "to": "libc",
             "address": "_exit",
-            "param_size": 4,
-            "return_size": 4
+            "param_size": 0,
+            "return_size": 0
         }
     ]
 }

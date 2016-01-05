@@ -2,7 +2,7 @@
     "states": [
         {
             "name": "start",
-            "stack": "stack",
+            "stack": "stack0",
             "sections": [
                 { "name": "buf", "description": "*main.o(.data.buf)", "flags": "rw" },
                 { "description": "*main.o(.text*)", "flags": "rx" },
@@ -13,9 +13,9 @@
         },
         {
             "name": "libc",
-            "stack": "stack",
+            "stack": "stack1",
             "sections" : [
-                { "name": "buf", "create": false, "description": "*main.o(.data.buf)", "flags": "rw" },
+                { "name": ".data.buf", "create": false, "flags": "rw" },
                 { "description": "*libc.o(.text*)", "flags": "rx" },
                 { "description": "*libc.o(.rodata*)", "flags": "r" },
                 { "description": "*libc.o(.data*)", "flags": "rw" },
