@@ -888,7 +888,10 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				if (!state)
 					continue;
 
-				if ((call_transition->addr & ~1) == addr) {
+				// Don't allow calling back into a previous
+				// state, need to maintain internal per-state
+				// stack if this is wanted
+				if ((call_transition->addr & ~1) == addr && state->return_addr == 0) {
 					*next_state = state;
 					*copy_size = call_transition->param_size;
 					state->return_addr = lr & ~1;
