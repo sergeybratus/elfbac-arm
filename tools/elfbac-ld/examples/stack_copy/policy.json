@@ -27,7 +27,7 @@
         },
         {
             "name": "libc",
-            "stack": "stack1",
+            "stack": "stack2",
             "sections" : [
                 { "name": ".data.buf", "create": false, "flags": "rw" },
                 { "name": ".data.xxx", "create": false, "flags": "rw" },

@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from elftools.elf.elffile import ELFFile
+from elftools.elf.sections import SymbolTableSection
 
 def is_bss(description):
     sections = description.split(' ')
@@ -79,11 +80,11 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
     CALL_TRANSITION = 4
 
     chunks = []
-    states = policy['states']
+    states_ = policy['states']
     data_transitions = policy.get('data_transitions', [])
     call_transitions = policy.get('call_transitions', [])
-    state_names = [s['name'] for s in states]
-    stack_names = stable_unique([s['stack'] for s in states])
+    state_names = [s['name'] for s in states_]
+    stack_names = stable_unique([s['stack'] for s in states_])
 
     if verbose:
         print '=' * 80
@@ -92,6 +93,11 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
     chunks.append(struct.pack('<I', len(stack_names)))
 
     # Pack states
+    states = list(states_)
+    if 'start' in state_names:
+        states.insert(0, states.pop(state_names.index('start')))
+        state_names = [s['name'] for s in states]
+
     for state in states:
         if verbose:
             print 'State %s:' % state['name']
@@ -120,34 +126,6 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
 
             chunks.append(struct.pack('<IIII', SECTION, base, size, flags))
 
-    # Pack data transitions
-    for transition in data_transitions:
-        from_state = state_names.index(transition['from'])
-        to_state = state_names.index(transition['to'])
-        size = int(transition['size'])
-
-        base_symbol = transition['base']
-
-        if re.match(r'0x[0-9a-f]+', base_symbol):
-            base = int(base_symbol, 16)
-        else:
-            base = symbol_map.get(base_symbol, 0)
-
-        if must_resolve and not base:
-            raise KeyError('Error resolving call transition at %s' % base_symbol)
-
-        flags = 0
-        flags |= (0x1 if 'r' in transition['flags'] else 0)
-        flags |= (0x2 if 'w' in transition ['flags'] else 0)
-        flags |= (0x4 if 'x' in transition['flags'] else 0)
-
-        if verbose:
-            print 'Data Transition from %s->%s on %08x->%08x, %x' % (from_state, to_state,
-                base, base + size, flags)
-
-        chunks.append(struct.pack('<IIIIII', DATA_TRANSITION, from_state, to_state,
-            base, size, flags))
-
     # Pack call transitions
     for transition in call_transitions:
         from_state = state_names.index(transition['from'])
@@ -163,7 +141,7 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
             address = symbol_map.get(address_symbol, 0)
 
         if must_resolve and not address:
-            raise KeyError('Error resolving data transition at %s' % address_symbol)
+            raise KeyError('Error resolving call transition at %s' % address_symbol)
 
         if verbose:
             print 'Call Transition from %08x->%08x on %x,%x,%x' % (from_state, to_state,
@@ -171,6 +149,34 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
 
         chunks.append(struct.pack('<IIIIII', CALL_TRANSITION, from_state, to_state,
             address, param_size, return_size))
+
+    # Pack data transitions
+    for transition in data_transitions:
+        from_state = state_names.index(transition['from'])
+        to_state = state_names.index(transition['to'])
+        size = int(transition['size'])
+
+        base_symbol = transition['base']
+
+        if re.match(r'0x[0-9a-f]+', base_symbol):
+            base = int(base_symbol, 16)
+        else:
+            base = symbol_map.get(base_symbol, 0)
+
+        if must_resolve and not base:
+            raise KeyError('Error resolving data transition at %s' % base_symbol)
+
+        flags = 0
+        flags |= (0x1 if 'r' in transition['flags'] else 0)
+        flags |= (0x2 if 'w' in transition ['flags'] else 0)
+        flags |= (0x4 if 'x' in transition['flags'] else 0)
+
+        if verbose:
+            print 'Data Transition from %s->%s on %08x->%08x, %x' % (from_state, to_state,
+                base, base + size, flags)
+
+        chunks.append(struct.pack('<IIIIII', DATA_TRANSITION, from_state, to_state,
+            base, size, flags))
 
     if verbose:
         print '=' * 80
@@ -191,14 +197,11 @@ def parse_link_map(link_map):
 
     # Find all allocated sections minus our stub policy section and return their
     # addresses and sizes in a map
-    sections = re.findall(r'^(\.[a-zA-Z0-9_.]+)\s+(0x[a-f0-9]+)\s+(0x[a-f0-9]+)\s+.*$', link_map, re.MULTILINE)
-    section_map = { name: (int(address, 16), int(size, 16)) for (name, address, size) in sections \
+    sections = re.findall(r'^((\.|__)[a-zA-Z0-9_.]+)\s+(0x[a-f0-9]+)\s+(0x[a-f0-9]+)\s+.*$', link_map, re.MULTILINE)
+    section_map = { name: (int(address, 16), int(size, 16)) for (name, _, address, size) in sections \
             if name != '.elfbac' and int(size, 16) > 0 }
 
-    symbols = re.findall(r'^ {16}(0x[a-f0-9]+)\s+(\w+)$', link_map, re.MULTILINE)
-    symbol_map = { name: int(address, 16) for (address, name) in symbols }
-
-    return (section_map, symbol_map)
+    return section_map
 
 def main(argv=None):
     if argv is None:
@@ -244,15 +247,20 @@ def main(argv=None):
         cmd = [args.linker] + args.linker_args + \
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
-        section_map, symbol_map = parse_link_map(link_map)
+        section_map = parse_link_map(link_map)
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
+    symbol_map = {}
     if os.path.exists(output_file):
         with open(output_file, 'rb') as f:
             contents = f.read()
             f.seek(0, 0)
             ef = ELFFile(f)
             elfbac_section = ef.get_section_by_name('.elfbac')
+
+            symbol_table_section = [s for s in ef.iter_sections() if isinstance(s, SymbolTableSection)][0]
+            assert(symbol_table_section['sh_size'] > 0)
+            symbol_map = { s.name: s['st_value'] for s in symbol_table_section.iter_symbols() }
 
         assert(elfbac_section['sh_size'] == policy_len)
         offset = elfbac_section['sh_offset']

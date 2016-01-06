@@ -1,0 +1,7 @@
+[submodule "tools/elfbac-ld/examples/hammer"]
+	path = tools/elfbac-ld/examples/hammer
+	url = https://github.com/pesco/hammer.git
+[submodule "tools/elfbac-ld/examples/proxy"]
+	path = tools/elfbac-ld/examples/proxy
+	url = https://github.com/mjkoo/proxy.git
+	branch = elfbac

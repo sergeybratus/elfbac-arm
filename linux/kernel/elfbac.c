@@ -855,7 +855,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 
 	// Check for return from a call transition
 	// TODO: Need 1 return_state_id per state per task for shared policies
-	if ((mask & VM_EXEC) && addr == policy->current_state->return_addr &&
+	if ((mask & VM_EXEC) && addr == (policy->current_state->return_addr & ~1) &&
 	    policy->current_state->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
 		state = get_state_by_id(policy, policy->current_state->return_state_id);
 		if (state) {
@@ -888,10 +888,10 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				if (!state)
 					continue;
 
-				if (call_transition->addr == addr) {
+				if ((call_transition->addr & ~1) == addr) {
 					*next_state = state;
 					*copy_size = call_transition->param_size;
-					state->return_addr = lr;
+					state->return_addr = lr & ~1;
 					state->return_size = call_transition->return_size;
 					state->return_state_id = policy->current_state->id;
 					goto good_transition;

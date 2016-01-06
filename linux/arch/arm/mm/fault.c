@@ -267,18 +267,18 @@ good_area:
 		unsigned char *copy_page = NULL;
 
 		/* From access_error above */
-		unsigned int mask = VM_READ;
+		unsigned int access = VM_READ;
 
 		if (fsr & FSR_WRITE)
-			mask = VM_WRITE;
+			access = VM_WRITE;
 		if (fsr & FSR_LNX_PF)
-			mask = VM_EXEC;
+			access = VM_EXEC;
 
 		fault = VM_FAULT_BADACCESS;
 
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
-		if (!elfbac_access_ok(mm->elfbac_policy, addr, mask, regs->ARM_lr,
+		if (!elfbac_access_ok(mm->elfbac_policy, addr, access, regs->ARM_lr,
 				      &next_state, &access_flags, &copy_size)) {
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
 				access_flags = VM_READ | VM_WRITE;
@@ -288,8 +288,8 @@ good_area:
 				// permissions to all states. Also handle vdso pages above stack.
 				access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
 			} else {
-				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, mask: %x\n",
-				       mm->elfbac_policy->current_state->id, addr, regs->ARM_pc, mask);
+				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, access: %x\n",
+				       mm->elfbac_policy->current_state->id, addr, regs->ARM_pc, access);
 
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 				goto out;
