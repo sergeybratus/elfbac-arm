@@ -119,6 +119,18 @@ int dump_task_regs(struct task_struct *t, elf_gregset_t *elfregs);
 
 #define ELF_ET_DYN_BASE	(TASK_SIZE / 3 * 2)
 
+#ifdef CONFIG_PAX_ASLR
+#define PAX_ELF_ET_DYN_BASE	0x00008000UL
+
+/*
+ * PaX: Old ARM had 26-bit virtual addresses.  Since we've limited PaX
+ * in this patch to v6+ ARM processors, we force the ASLR entropy levels to
+ * the higher amounts below
+ */
+#define PAX_DELTA_MMAP_LEN	16
+#define PAX_DELTA_STACK_LEN	16
+#endif
+
 /* When the program starts, a1 contains a pointer to a function to be 
    registered with atexit, as per the SVR4 ABI.  A value of 0 means we 
    have no such handler.  */

@@ -340,6 +340,24 @@ static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 		   cpumask_pr_args(&task->cpus_allowed));
 }
 
+#if defined(CONFIG_PAX_PAGEEXEC) || defined(CONFIG_PAX_ASLR)
+static inline void task_pax(struct seq_file *m, struct task_struct *p)
+{
+	/*
+	 * PaX: We retain compatibility with userland parsing the PaX line
+	 * from /proc/pid/status even though this split-out patch for ARM
+	 * has no support for SEGMEXEC or EMUTRAMP
+	 */
+	if (p->mm)
+		seq_printf(m, "PaX:\t%ce%c%cs\n",
+			   p->mm->pax_flags & MF_PAX_PAGEEXEC ? 'P' : 'p',
+			   p->mm->pax_flags & MF_PAX_MPROTECT ? 'M' : 'm',
+			   p->mm->pax_flags & MF_PAX_RANDMMAP ? 'R' : 'r');
+	else
+		seq_printf(m, "PaX:\t-----\n");
+}
+#endif
+
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
@@ -358,6 +376,11 @@ int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 	task_cpus_allowed(m, task);
 	cpuset_task_status_allowed(m, task);
 	task_context_switch_counts(m, task);
+
+#if defined(CONFIG_PAX_PAGEEXEC) || defined(CONFIG_PAX_ASLR)
+	task_pax(m, task);
+#endif
+
 	return 0;
 }
 
@@ -381,6 +404,16 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	unsigned long rsslim = 0;
 	char tcomm[sizeof(task->comm)];
 	unsigned long flags;
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Prevent an attacker from being able to trick a suid binary into
+	 * reading a /proc/pid/stat file descriptor it passed in through execve
+	 * of the suid binary.
+	 */
+	if (current->exec_id != m->exec_id)
+		return 0;
+#endif
 
 	state = *get_task_state(task);
 	vsize = eip = esp = 0;
@@ -451,6 +484,17 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		task_cputime_adjusted(task, &utime, &stime);
 		gtime = task_gtime(task);
 	}
+
+
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: Prevent address leaks */
+	if (pax_aslr_viewing_denied(mm)) {
+		eip = 0;
+		esp = 0;
+		wchan = 0;
+		permitted = 0;
+	}
+#endif
 
 	/* scale priority and nice values from timeslices to -20..20 */
 	/* to make it look like a "normal" Unix priority/nice value  */
@@ -551,6 +595,18 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 		size = task_statm(mm, &shared, &text, &data, &resident);
 		mmput(mm);
 	}
+
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Prevent an attacker from being able to trick a suid binary into
+	 * reading a /proc/pid/statm file descriptor it passed in through execve
+	 * of the suid binary.
+	 */
+	if (current->exec_id != m->exec_id)
+		return 0;
+#endif
+
 	/*
 	 * For quick read, open code by putting numbers directly
 	 * expected format is

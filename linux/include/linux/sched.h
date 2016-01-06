@@ -1724,7 +1724,47 @@ struct task_struct {
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 	unsigned long	task_state_change;
 #endif
+
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: uniquely identifies this process, changes at execve() time */
+	u64 exec_id;
+#endif
+
 };
+
+/* PaX: mm_struct pax_flags values */
+#define MF_PAX_PAGEEXEC		0x01000000	/* Paging based non-executable pages */
+#define MF_PAX_MPROTECT		0x04000000	/* Restrict mprotect() */
+#define MF_PAX_RANDMMAP		0x08000000	/* Randomize mmap()/heap/PIE base */
+
+extern int pax_check_flags(unsigned long *);
+#define PAX_PARSE_FLAGS_FALLBACK	(~0UL)
+
+#if defined(CONFIG_PAX_PAGEEXEC) || defined(CONFIG_PAX_ASLR)
+/* if tsk != current then task_lock must be held on it */
+static inline unsigned long pax_get_flags(struct task_struct *tsk)
+{
+	if (likely(tsk->mm))
+		return tsk->mm->pax_flags;
+	else
+		return 0UL;
+}
+
+/* if tsk != current then task_lock must be held on it */
+static inline long pax_set_flags(struct task_struct *tsk, unsigned long flags)
+{
+	if (likely(tsk->mm)) {
+		tsk->mm->pax_flags = flags;
+		return 0;
+	}
+	return -EINVAL;
+}
+#endif
+
+struct path;
+extern char *pax_get_path(const struct path *path, char *buf, int buflen);
+extern void pax_report_fault(struct pt_regs *regs, void *pc, void *sp);
+extern void pax_report_insns(struct pt_regs *regs, void *pc, void *sp);
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
 #define tsk_cpus_allowed(tsk) (&(tsk)->cpus_allowed)

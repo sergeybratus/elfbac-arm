@@ -11,17 +11,47 @@
 #include <asm/assembler.h>
 #include <asm/unistd.h>
 #include <asm/ftrace.h>
+#include <asm/domain.h>
 #include <asm/unwind.h>
+
+#include "entry-header.S"
 
 #ifdef CONFIG_NEED_RET_TO_USER
 #include <mach/entry-macro.S>
 #else
+
+	/*
+	 * PaX: Similar to how pax_enter_kernel_user doesn't save DACR
+	 * since we know it is entering from userland, we implement the
+	 * below macro which only executes when returning to userland.
+	 * The only difference between this and pax_exit_kernel is that
+	 * DACR is not restored from the stack
+	 */
 	.macro  arch_ret_to_user, tmp1, tmp2
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	@ save regs
+	stmdb	sp!, {r1, r2}
+	@ read DACR from cpu_domain into r1
+	mov	r2, sp
+	@ assume 8K kernel stacks, since we have to split the immediate in two
+	bic	r2, r2, #(0x1fc0)
+	bic	r2, r2, #(0x3f)
+	@ thread_info appears at the base of the kernel stack, r2 now points to it
+	ldr	r1, [r2, #TI_CPU_DOMAIN]
+	@ set current DOMAIN_USER to DOMAIN_UDEREF
+	bic	r1, r1, #(domain_val(DOMAIN_USER, 3))
+	orr	r1, r1, #(domain_val(DOMAIN_USER, DOMAIN_UDEREF))
+	@ write r1 to current_thread_info()->cpu_domain
+	str	r1, [r2, #TI_CPU_DOMAIN]
+	@ write r1 to DACR
+	mcr	p15, 0, r1, c3, c0, 0
+	@ instruction sync
+	instr_sync
+	@ restore regs
+	ldmia	sp!, {r1, r2}
+#endif
 	.endm
 #endif
-
-#include "entry-header.S"
-
 
 	.align	5
 /*
@@ -172,6 +202,12 @@ ENTRY(vector_swi)
 	/* Legacy ABI only. */
  USER(	ldr	scno, [lr, #-4]		)	@ get SWI instruction
 #endif
+
+	/*
+	 * PaX: Do this here to avoid a performance hit of wrapping the code
+	 * above that directly dereferences userland to parse the SWI instruction
+	 */
+	pax_enter_kernel_user
 
 	adr	tbl, sys_call_table		@ load syscall table pointer
 

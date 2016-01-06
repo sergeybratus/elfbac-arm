@@ -196,6 +196,59 @@
 	msr	cpsr_c, \rtemp			@ switch back to the SVC mode
 	.endm
 
+	/*
+	 * PaX: This variant of pax_enter_kernel is only used when we're entering
+	 * the kernel from userland and thus don't need to save DACR onto the stack
+	 */
+	.macro  pax_enter_kernel_user
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	@ save regs
+	stmdb	sp!, {r0, r1}
+	@ read DACR from cpu_domain into r1
+	mov	r0, sp
+	@ assume 8K kernel stacks, since we have to split the immediate in two
+	bic	r0, r0, #(0x1fc0)
+	bic	r0, r0, #(0x3f)
+	@ thread_info appears at the base of kernel stack, r0 now points to it
+	ldr	r1, [r0, #TI_CPU_DOMAIN]
+	@ set current DOMAIN_USER to DOMAIN_NOACCESS (set to 0 by clearing)
+	bic	r1, r1, #(domain_val(DOMAIN_USER, 3))
+	@ write r1 to current_thread_info()->cpu_domain
+	str	r1, [r0, #TI_CPU_DOMAIN]
+	@ write r1 to DACR
+	mcr	p15, 0, r1, c3, c0, 0
+	@ instruction sync
+	instr_sync
+	@ restore regs
+	ldmia	sp!, {r0, r1}
+#endif
+	.endm
+
+	.macro  pax_exit_kernel
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	@ save regs
+	stmdb	sp!, {r0, r1}
+	@ read old DACR from stack into r1
+	ldr	r1, [sp, #(8 + S_SP)]
+	sub	r1, r1, #8
+	ldr	r1, [r1]
+
+	@ write r1 to current_thread_info()->cpu_domain
+	mov	r0, sp
+	@ assume 8K pages, since we have to split the immediate in two
+	bic	r0, r0, #(0x1fc0)
+	bic	r0, r0, #(0x3f)
+	@ thread_info appears at the base of kernel stack, r0 now points to it
+	str	r1, [r0, #TI_CPU_DOMAIN]
+	@ write r1 to DACR
+	mcr	p15, 0, r1, c3, c0, 0
+	@ instruction sync
+	instr_sync
+	@ restore regs
+	ldmia	sp!, {r0, r1}
+#endif
+	.endm
+
 #ifndef CONFIG_THUMB2_KERNEL
 	.macro	svc_exit, rpsr, irq = 0
 	.if	\irq != 0
@@ -215,6 +268,9 @@
 	blne	trace_hardirqs_off
 #endif
 	.endif
+
+	pax_exit_kernel
+
 	msr	spsr_cxsf, \rpsr
 #if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_32v6K)
 	@ We must avoid clrex due to Cortex-A15 erratum #830321
@@ -291,6 +347,9 @@
 	blne	trace_hardirqs_off
 #endif
 	.endif
+
+	pax_exit_kernel
+
 	ldr	lr, [sp, #S_SP]			@ top of the stack
 	ldrd	r0, r1, [sp, #S_LR]		@ calling lr and pc
 

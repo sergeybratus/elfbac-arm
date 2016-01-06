@@ -56,8 +56,12 @@
 #include <linux/pipe_fs_i.h>
 #include <linux/oom.h>
 #include <linux/compat.h>
+#include <linux/random.h>
+#include <linux/coredump.h>
+#include <linux/mman.h>
 
 #include <asm/uaccess.h>
+#include <asm/sections.h>
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
 
@@ -210,6 +214,19 @@ static struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
 		if (size <= ARG_MAX)
 			return page;
 
+
+#ifdef CONFIG_PAX_ASLR
+		/* PaX: Only allow 512KB for argv+env on suid/sgid binaries
+		 * to prevent easy ASLR exhaustion
+		 */
+		if ((!uid_eq(bprm->cred->euid, current_euid()) ||
+		     !gid_eq(bprm->cred->egid, current_egid())) &&
+		    (size > (512 * 1024))) {
+			put_page(page);
+			return NULL;
+		}
+#endif
+
 		/*
 		 * Limit to 1/4-th the stack size for the argv+env strings.
 		 * This ensures that:
@@ -280,6 +297,16 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	arch_bprm_mm_init(mm, vma);
 	up_write(&mm->mmap_sem);
 	bprm->p = vma->vm_end - sizeof(void *);
+
+#ifdef CONFIG_PAX_RANDUSTACK
+	/*
+	 * PaX: This is the 2nd-stage stack randomization which adds additional
+	 * intra-page randomization of argv/env
+	 */
+	if (randomize_va_space)
+		bprm->p ^= prandom_u32() & ~PAGE_MASK;
+#endif
+
 	return 0;
 err:
 	up_write(&mm->mmap_sem);
@@ -690,6 +717,28 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	bprm->exec -= stack_shift;
 
 	down_write(&mm->mmap_sem);
+
+	/* Move stack pages down in memory. */
+	if (stack_shift) {
+		ret = shift_arg_pages(vma, stack_shift);
+		if (ret)
+			goto out_unlock;
+	}
+
+#ifdef CONFIG_PAX_PAGEEXEC
+	/* PaX: Enforce a non-executable stack */
+	if (mm->pax_flags & MF_PAX_PAGEEXEC) {
+		vm_flags &= ~VM_EXEC;
+
+#ifdef CONFIG_PAX_MPROTECT
+		/* PaX: Prevent stack from becoming executable in the future */
+		if (mm->pax_flags & MF_PAX_MPROTECT)
+			vm_flags &= ~VM_MAYEXEC;
+#endif
+
+	}
+#endif
+
 	vm_flags = VM_STACK_FLAGS;
 
 	/*
@@ -709,13 +758,6 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	if (ret)
 		goto out_unlock;
 	BUG_ON(prev != vma);
-
-	/* Move stack pages down in memory. */
-	if (stack_shift) {
-		ret = shift_arg_pages(vma, stack_shift);
-		if (ret)
-			goto out_unlock;
-	}
 
 	/* mprotect_fixup is overkill to remove the temporary stack flags */
 	vma->vm_flags &= ~VM_STACK_INCOMPLETE_SETUP;
@@ -740,6 +782,28 @@ int setup_arg_pages(struct linux_binprm *bprm,
 #endif
 	current->mm->start_stack = bprm->p;
 	ret = expand_stack(vma, stack_base);
+
+#if !defined(CONFIG_STACK_GROWSUP) && defined(CONFIG_PAX_RANDMMAP)
+	/*
+	 * PaX: Prevent reduction of ASLR entropy under address space exhaustion
+	 * by filling the space above the randomizied main stack base with
+	 * a PROT_NONE mapping.  On ARM we're unable to do something similar for
+	 * the bottom of the usable address space for compatibility reasons.
+	 * The STACK_TOP check ensures this is only done if address space exhaustion
+	 * is a reasonable concern (i.e. only on 32-bit architectures).
+	 */
+	if (!ret && (mm->pax_flags & MF_PAX_RANDMMAP) && STACK_TOP <= 0xFFFFFFFFU &&
+	    STACK_TOP > vma->vm_end) {
+		unsigned long size;
+		vm_flags_t vm_flags;
+
+		size = STACK_TOP - vma->vm_end;
+		vm_flags = VM_NONE | VM_DONTEXPAND | VM_DONTDUMP;
+
+		ret = vma->vm_end != mmap_region(NULL, vma->vm_end, size, vm_flags, 0);
+	}
+#endif
+
 	if (ret)
 		ret = -EFAULT;
 
@@ -1472,6 +1536,38 @@ static int exec_binprm(struct linux_binprm *bprm)
 	return ret;
 }
 
+#ifdef CONFIG_PAX_ASLR
+/*
+ * PaX: For performance reasons we split up the u64 space into per-cpu ranges
+ * This still avoids any duplication of the 64-bit exec ids without having to
+ * use any expensive locking or 64-bit atomic operations
+ * There is method to the madness of starting each value off at the CPU number
+ * rather than splitting up the range into distinct areas -- it allows us
+ * to ignore the overflow case in code and let the CPU itself handle it whenever
+ * a per-CPU value eventually overflows.  It constrains the overflow to the
+ * 48 MSBs without disturbing the CPU id in the lower 16 MSBs.
+ */
+static DEFINE_PER_CPU(u64, exec_counter);
+static int __init init_exec_counters(void)
+{
+	unsigned int cpu;
+
+	for_each_possible_cpu(cpu) {
+		per_cpu(exec_counter, cpu) = (u64)cpu;
+	}
+
+	return 0;
+}
+early_initcall(init_exec_counters);
+static inline void increment_exec_counter(void)
+{
+	BUILD_BUG_ON(NR_CPUS > (1 << 16));
+	current->exec_id = this_cpu_add_return(exec_counter, 1 << 16);
+}
+#else
+static inline void increment_exec_counter(void) {}
+#endif
+
 /*
  * sys_execve() executes a new program.
  */
@@ -1485,6 +1581,11 @@ static int do_execveat_common(int fd, struct filename *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
+
+#ifdef CONFIG_PAX_ASLR
+	unsigned long saved_stack_rlimit;
+	bool modified_rlimit = false;
+#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1568,6 +1669,21 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (retval < 0)
 		goto out;
 
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: Limit total stack size for suid binaries to 8MB by forcing
+	 * an upper rlimit bound.  If the execve fails, we will restore the
+	 * rlimit for the current process below
+	 */
+
+	if ((!uid_eq(bprm->cred->euid, current_euid()) ||
+	     !gid_eq(bprm->cred->egid, current_egid())) &&
+	    (current->signal->rlim[RLIMIT_STACK].rlim_cur > (8 * 1024 * 1024))) {
+		saved_stack_rlimit = current->signal->rlim[RLIMIT_STACK].rlim_cur;
+		current->signal->rlim[RLIMIT_STACK].rlim_cur = 8 * 1024 * 1024;
+		modified_rlimit = true;
+	}
+#endif
+
 	retval = copy_strings_kernel(1, &bprm->filename, bprm);
 	if (retval < 0)
 		goto out;
@@ -1586,6 +1702,10 @@ static int do_execveat_common(int fd, struct filename *filename,
 		goto out;
 
 	/* execve succeeded */
+
+	/* PaX: Update current->exec_id */
+	increment_exec_counter();
+
 	current->fs->in_exec = 0;
 	current->in_execve = 0;
 	acct_update_integrals(current);
@@ -1598,6 +1718,12 @@ static int do_execveat_common(int fd, struct filename *filename,
 	return retval;
 
 out:
+
+#ifdef CONFIG_PAX_ASLR
+	if (modified_rlimit)
+		current->signal->rlim[RLIMIT_STACK].rlim_cur = saved_stack_rlimit;
+#endif
+
 	if (bprm->mm) {
 		acct_arg_size(bprm, 0);
 		mmput(bprm->mm);
@@ -1743,3 +1869,179 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 				  argv, envp, flags);
 }
 #endif
+
+int pax_check_flags(unsigned long *flags)
+{
+	int retval = 0;
+
+	if ((*flags & MF_PAX_MPROTECT)
+
+#ifdef CONFIG_PAX_MPROTECT
+	    && !(*flags & MF_PAX_PAGEEXEC)
+#endif
+
+	   )
+	{
+		*flags &= ~MF_PAX_MPROTECT;
+		retval = -EINVAL;
+	}
+
+	return retval;
+}
+
+EXPORT_SYMBOL(pax_check_flags);
+
+#ifdef CONFIG_PAX_PAGEEXEC
+char *pax_get_path(const struct path *path, char *buf, int buflen)
+{
+	char *pathname = d_path(path, buf, buflen);
+
+	if (IS_ERR(pathname))
+		goto toolong;
+
+	pathname = mangle_path(buf, pathname, "\t\n\\");
+	if (!pathname)
+		goto toolong;
+
+	*pathname = 0;
+	return buf;
+
+toolong:
+	return "<path too long>";
+}
+EXPORT_SYMBOL(pax_get_path);
+
+void pax_report_fault(struct pt_regs *regs, void *pc, void *sp)
+{
+	struct task_struct *tsk = current;
+	struct mm_struct *mm = current->mm;
+	char *buffer_exec = (char *)__get_free_page(GFP_KERNEL);
+	char *buffer_fault = (char *)__get_free_page(GFP_KERNEL);
+	char *path_exec = NULL;
+	char *path_fault = NULL;
+	unsigned long start = 0UL, end = 0UL, offset = 0UL;
+	siginfo_t info = { };
+
+	if (buffer_exec && buffer_fault) {
+		struct vm_area_struct *vma, *vma_exec = NULL, *vma_fault = NULL;
+
+		down_read(&mm->mmap_sem);
+		vma = mm->mmap;
+		while (vma && (!vma_exec || !vma_fault)) {
+			if (vma->vm_file && mm->exe_file == vma->vm_file && (vma->vm_flags & VM_EXEC))
+				vma_exec = vma;
+			if (vma->vm_start <= (unsigned long)pc && (unsigned long)pc < vma->vm_end)
+				vma_fault = vma;
+			vma = vma->vm_next;
+		}
+		if (vma_exec)
+			path_exec = pax_get_path(&vma_exec->vm_file->f_path, buffer_exec, PAGE_SIZE);
+		if (vma_fault) {
+			start = vma_fault->vm_start;
+			end = vma_fault->vm_end;
+			offset = vma_fault->vm_pgoff << PAGE_SHIFT;
+			if (vma_fault->vm_file)
+				path_fault = pax_get_path(&vma_fault->vm_file->f_path, buffer_fault, PAGE_SIZE);
+			else if ((unsigned long)pc >= mm->start_brk && (unsigned long)pc < mm->brk)
+				path_fault = "<heap>";
+			else if (vma_fault->vm_flags & (VM_GROWSDOWN | VM_GROWSUP))
+				path_fault = "<stack>";
+			else
+				path_fault = "<anonymous mapping>";
+		}
+		up_read(&mm->mmap_sem);
+	}
+	printk(KERN_ERR "PAX: execution attempt in: %s, %08lx-%08lx %08lx\n", path_fault, start, end, offset);
+	printk(KERN_ERR "PAX: terminating task: %s(%s):%d, uid/euid: %u/%u, PC: %p, SP: %p\n", path_exec, tsk->comm, task_pid_nr(tsk),
+			from_kuid_munged(&init_user_ns, task_uid(tsk)), from_kuid_munged(&init_user_ns, task_euid(tsk)), pc, sp);
+	free_page((unsigned long)buffer_exec);
+	free_page((unsigned long)buffer_fault);
+	pax_report_insns(regs, pc, sp);
+	info.si_signo = SIGKILL;
+	info.si_errno = 0;
+	info.si_code = SI_KERNEL;
+	info.si_pid = 0;
+	info.si_uid = 0;
+	do_coredump(&info);
+}
+#endif
+
+#ifdef CONFIG_PAX_USERCOPY
+/*  0: fully outside stack bounds
+ *  1: fully inside stack bounds
+ * -1: partially in bounds (implies an error)
+ */
+static int check_stack_object(const void *obj, unsigned long len)
+{
+	const void * const stack = task_stack_page(current);
+	const void * const stackend = stack + THREAD_SIZE;
+
+	if (obj + len < obj)
+		return -1;
+
+	if (obj + len <= stack || stackend <= obj)
+		return 0;
+
+	if (obj < stack || stackend < obj + len)
+		return -1;
+
+	return 1;
+}
+
+static void pax_report_usercopy(const void *ptr, unsigned long len, bool to_user, const char *type)
+{
+	printk(KERN_EMERG "PAX: kernel memory %s attempt detected %s %p (%s) (%lu bytes)\n",
+	       to_user ? "leak" : "overwrite", to_user ? "from" : "to", ptr, type ? : "unknown", len);
+	dump_stack();
+	do_group_exit(SIGKILL);
+}
+#endif
+
+#ifdef CONFIG_PAX_USERCOPY
+static inline bool check_kernel_text_object(unsigned long low, unsigned long high)
+{
+	unsigned long textlow = (unsigned long)_stext;
+	unsigned long texthigh = (unsigned long)_etext;
+
+	if (high <= textlow || low >= texthigh)
+		return false;
+	else
+		return true;
+}
+#endif
+
+void __check_object_size(const void *ptr, unsigned long n, bool to_user, bool const_size)
+{
+#ifdef CONFIG_PAX_USERCOPY
+	const char *type;
+
+	/*
+	 * we skip checkied copies of constant size as they're unlikely to be security-relevant
+	 * and this improves performance quite a bit
+	 */
+	if (const_size)
+		return;
+
+	if (!n)
+		return;
+
+	type = check_heap_object(ptr, n);
+	if (!type) {
+		int ret = check_stack_object(ptr, n);
+		if (ret == 1 || ret == 2)
+			return;
+		if (ret == 0) {
+			if (check_kernel_text_object((unsigned long)ptr, (unsigned long)ptr + n))
+				type = "<kernel text>";
+			else
+				return;
+		} else
+			type = "<process stack>";
+	}
+
+	pax_report_usercopy(ptr, n, to_user, type);
+#endif
+
+}
+EXPORT_SYMBOL(__check_object_size);
+

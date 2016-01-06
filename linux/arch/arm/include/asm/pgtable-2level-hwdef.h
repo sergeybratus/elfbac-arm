@@ -39,6 +39,14 @@
 #define PMD_SECT_nG		(_AT(pmdval_t, 1) << 17)	/* v6 */
 #define PMD_SECT_SUPER		(_AT(pmdval_t, 1) << 18)	/* v6 */
 #define PMD_SECT_AF		(_AT(pmdval_t, 0))
+/*
+ * PaX: We use this define for LPAE which has an easily-expressible
+ * way of marking a PMD read-only, unlike on !LPAE where it's expressed
+ * via the confusing PMD_SECT_APX|PMD_SECT_AP_wRITE combination.
+ * Since this is the !LPAE header, make it an empty define (just like
+ * the LPAE header does with PMD_SECT_APX and PMD_SECT_AP_WRITE)
+ */
+#define PMD_SECT_RDONLY		(_AT(pmdval_t, 0))
 
 #define PMD_SECT_UNCACHED	(_AT(pmdval_t, 0))
 #define PMD_SECT_BUFFERED	(PMD_SECT_BUFFERABLE)

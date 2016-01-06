@@ -28,6 +28,7 @@
 #include <asm/tlbflush.h>
 #include <asm/pgalloc.h>
 #include <asm/mmu_context.h>
+#include <asm/sections.h>
 
 #include "fault.h"
 
@@ -151,6 +152,27 @@ __do_kernel_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 	if (fixup_exception(regs))
 		return;
 
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	/* PaX: handles the case of accessing a non-present page in userland */
+	if (addr < TASK_SIZE)
+		printk(KERN_EMERG "PAX %s:%d, uid/euid: %u/%u, attempted to access "
+		       "userland memory at %08lx\n", current->comm, task_pid_nr(current),
+		       from_kuid_munged(&init_user_ns, current_uid()),
+		       from_kuid_munged(&init_user_ns, current_euid()), addr);
+#endif
+
+#ifdef CONFIG_PAX_KERNEXEC
+	/* PaX: handles attempted kernel code modification: see vmlinux.lds.S */
+	if ((fsr & FSR_WRITE) &&
+	    (((unsigned long)_stext <= addr && addr < init_mm.end_code) ||
+	     (MODULES_VADDR <= addr && addr < MODULES_END)))
+		printk(KERN_EMERG "PAX: %s:%d, uid/euid: %u/%u, attempted to modify "
+		       "kernel code at %08lx\n", current->comm, task_pid_nr(current),
+		       from_kuid_munged(&init_user_ns, current_uid()),
+		       from_kuid_munged(&init_user_ns, current_euid()), addr);
+#endif
+
+
 	/*
 	 * No handler, we'll have to terminate things with extreme prejudice.
 	 */
@@ -183,6 +205,13 @@ __do_user_fault(struct task_struct *tsk, unsigned long addr,
 		       tsk->comm, sig, addr, fsr);
 		show_pte(tsk->mm, addr);
 		show_regs(regs);
+	}
+#endif
+
+#ifdef CONFIG_PAX_PAGEEXEC
+	if ((tsk->mm->pax_flags & MF_PAX_PAGEEXEC) && (fsr & FSR_LNX_PF)) {
+		pax_report_fault(regs, (void *)regs->ARM_pc, (void *)regs->ARM_sp);
+		do_group_exit(SIGKILL);
 	}
 #endif
 
@@ -509,6 +538,33 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 }
 #endif					/* CONFIG_MMU */
 
+#ifdef CONFIG_PAX_PAGEEXEC
+void pax_report_insns(struct pt_regs *regs, void *pc, void *sp)
+{
+	long i;
+
+	printk(KERN_ERR "PAX: bytes at PC: ");
+	for (i = 0; i < 20; i++) {
+		unsigned char c;
+		if (get_user(c, (__force unsigned char __user *)pc+i))
+			printk(KERN_CONT "?? ");
+		else
+			printk(KERN_CONT "%02x ", c);
+	}
+	printk("\n");
+
+	printk(KERN_ERR "PAX: bytes at SP-4: ");
+	for (i = -1; i < 20; i++) {
+		unsigned long c;
+		if (get_user(c, (__force unsigned long __user *)sp+i))
+			printk(KERN_CONT "???????? ");
+		else
+			printk(KERN_CONT "%08lx ", c);
+	}
+	printk("\n");
+}
+#endif
+
 /*
  * First Level Translation Fault Handler
  *
@@ -656,9 +712,20 @@ do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	const struct fsr_info *inf = fsr_info + fsr_fs(fsr);
 	struct siginfo info;
 
+#ifdef CONFIG_PAX_MEMORY_UDEREF
+	if (addr < TASK_SIZE && is_domain_fault(fsr)) {
+		printk(KERN_EMERG "PAX %s:%d, uid/euid: %u/%u, attempted to access "
+		       "userland memory at %08lx\n", current->comm, task_pid_nr(current),
+		       from_kuid_munged(&init_user_ns, current_uid()),
+		       from_kuid_munged(&init_user_ns, current_euid()), addr);
+		goto die;
+	}
+#endif
+
 	if (!inf->fn(addr, fsr & ~FSR_LNX_PF, regs))
 		return;
 
+die:
 	pr_alert("Unhandled fault: %s (0x%03x) at 0x%08lx\n",
 		inf->name, fsr, addr);
 	show_pte(current->mm, addr);
@@ -683,15 +750,72 @@ hook_ifault_code(int nr, int (*fn)(unsigned long, unsigned int, struct pt_regs *
 	ifsr_info[nr].name = name;
 }
 
+asmlinkage int sys_sigreturn(struct pt_regs *regs);
+asmlinkage int sys_rt_sigreturn(struct pt_regs *regs);
+
 asmlinkage void __exception
 do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 {
 	const struct fsr_info *inf = ifsr_info + fsr_fs(ifsr);
 	struct siginfo info;
+	unsigned long pc = instruction_pointer(regs);
+
+	/*
+	 * PaX: Emulate a subset of KUSER_HELPERS that are needed on some
+	 * recent userlands
+	 */
+	if (user_mode(regs)) {
+		unsigned long sigpage = current->mm->context.sigpage;
+
+		/*
+		 * PaX: There are 7 sigreturn codes, so we end up
+		 * with a range userland can attempt to trigger from
+		 * the sigpage to sigpage + 7 * size of each code (4)
+		 * As seen in arch/arm/kernel/sigreturn_codes.S, the
+		 * first 3 entries are to call sigreturn, and the remaining
+		 * are used to call rt_sigreturn
+		 */
+
+		if (sigpage <= pc && pc < sigpage + 7*4) {
+			if (pc < sigpage + 3*4)
+				sys_sigreturn(regs);
+			else
+				sys_rt_sigreturn(regs);
+			return;
+		}
+		if (pc == 0xffff0fa0UL) {
+			/*
+			 * PaX: __kuser_memory_barrier emulation
+			 */
+			// dmb(); implied by the exception
+			regs->ARM_pc = regs->ARM_lr;
+			return;
+		}
+		if (pc == 0xffff0fe0UL) {
+			/*
+			 * PaX: __kuser_get_tls emulation
+			 */
+			regs->ARM_r0 = current_thread_info()->tp_value[0];
+			regs->ARM_pc = regs->ARM_lr;
+			return;
+		}
+	}
+
+#if defined(CONFIG_PAX_MEMORY_UDEREF) || defined(CONFIG_PAX_KERNEXEC)
+	else if (is_domain_fault(ifsr) || is_xn_fault(ifsr)) {
+		printk(KERN_EMERG "PAX: %s:%d, uid/euid: %u/%u, attempted to execute "
+		       "%s memory at %08lx\n", current->comm, task_pid_nr(current),
+			from_kuid_munged(&init_user_ns, current_uid()),
+			from_kuid_munged(&init_user_ns, current_euid()),
+			pc >= TASK_SIZE ? "non-executable kernel" : "userland", pc);
+		goto die;
+	}
+#endif
 
 	if (!inf->fn(addr, ifsr | FSR_LNX_PF, regs))
 		return;
 
+die:
 	pr_alert("Unhandled prefetch abort: %s (0x%03x) at 0x%08lx\n",
 		inf->name, ifsr, addr);
 

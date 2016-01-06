@@ -284,6 +284,7 @@ static unsigned long do_brk(unsigned long addr, unsigned long len);
 
 SYSCALL_DEFINE1(brk, unsigned long, brk)
 {
+	unsigned long rlim;
 	unsigned long retval;
 	unsigned long newbrk, oldbrk;
 	struct mm_struct *mm = current->mm;
@@ -308,13 +309,26 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	if (brk < min_brk)
 		goto out;
 
+	rlim = rlimit(RLIMIT_DATA);
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Force a minimum 16MB brk heap on suid/sgid binaries
+	 * This ensures initial allocations can't be forced by an attacker
+	 * to use mmap, reducing the effective amount of entropy
+	 */
+	if (rlim < (4096 * PAGE_SIZE) && (get_dumpable(mm) != SUID_DUMP_USER) && 
+	    !uid_eq(current_uid(), GLOBAL_ROOT_UID))
+		rlim = 4096 * PAGE_SIZE;
+#endif
+
 	/*
 	 * Check against rlimit here. If this check is done later after the test
 	 * of oldbrk with newbrk then it can escape the test and let the data
 	 * segment grow beyond its set limit the in case where the limit is
 	 * not page aligned -Ram Gupta
 	 */
-	if (check_data_rlimit(rlimit(RLIMIT_DATA), brk, mm->start_brk,
+	if (check_data_rlimit(rlim, brk, mm->start_brk,
 			      mm->end_data, mm->start_data))
 		goto out;
 
@@ -1202,6 +1216,13 @@ void vm_stat_account(struct mm_struct *mm, unsigned long flags,
 	const unsigned long stack_flags
 		= VM_STACK_FLAGS & (VM_GROWSUP|VM_GROWSDOWN);
 
+#ifdef CONFIG_PAX_RANDMMAP
+	/*
+	 * PaX: Don't account our inserted PROT_NONE mappings
+	 */
+	if (!(mm->pax_flags & MF_PAX_RANDMMAP) || (flags & (VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)))
+#endif
+
 	mm->total_vm += pages;
 
 	if (file) {
@@ -1300,6 +1321,24 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	 */
 	vm_flags = calc_vm_prot_bits(prot) | calc_vm_flag_bits(flags) |
 			mm->def_flags | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC;
+
+#ifdef CONFIG_PAX_MPROTECT
+	if (mm->pax_flags & MF_PAX_MPROTECT) {
+		/*
+		 * PaX: Enforce W^X semantics on mmap():
+		 * WX mappings are rejected outright
+		 * X mappings are disallowed from becoming writable in the future
+		 * W mappings are disallowed from becoming executable in the future
+		 */
+		if ((vm_flags & (VM_WRITE | VM_EXEC)) == (VM_WRITE | VM_EXEC))
+			return -EPERM;
+
+		if (!(vm_flags & VM_EXEC))
+			vm_flags &= ~VM_MAYEXEC;
+		else
+			vm_flags &= ~VM_MAYWRITE;
+	}
+#endif
 
 	if (flags & MAP_LOCKED)
 		if (!can_do_mlock())
@@ -1533,6 +1572,14 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 	unsigned long charged = 0;
 
 	/* Check against address space limit. */
+
+#ifdef CONFIG_PAX_RANDMMAP
+	/*
+	 * PaX: Don't check our inserted PROT_NONE mappings against the address space limit
+	 */
+	if (!(mm->pax_flags & MF_PAX_RANDMMAP) || (vm_flags & (VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)))
+#endif
+
 	if (!may_expand_vm(mm, len >> PAGE_SHIFT)) {
 		unsigned long nr_pages;
 
@@ -2722,6 +2769,20 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 
 	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
 
+#ifdef CONFIG_PAX_PAGEEXEC
+	/* PaX: Make brk-managed heap non-executable */
+	if (mm->pax_flags & MF_PAX_PAGEEXEC) {
+		flags &= ~VM_EXEC;
+
+#ifdef CONFIG_PAX_MPROTECT
+		/* PaX: Prevent heap from becoming executable in the future */
+		if (mm->pax_flags & MF_PAX_MPROTECT)
+			flags &= ~VM_MAYEXEC;
+#endif
+
+	}
+#endif
+
 	error = get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
 	if (error & ~PAGE_MASK)
 		return error;
@@ -3057,6 +3118,18 @@ static struct vm_area_struct *__install_special_mapping(
 	vma->vm_mm = mm;
 	vma->vm_start = addr;
 	vma->vm_end = addr + len;
+
+#ifdef CONFIG_PAX_MPROTECT
+	/* PaX: Enforce W^X semantics on "special" mappings, e.g. VDSO */
+	if (mm->pax_flags & MF_PAX_MPROTECT) {
+		if ((vm_flags & (VM_WRITE | VM_EXEC)) == (VM_WRITE | VM_EXEC))
+			return ERR_PTR(-EPERM);
+		if (!(vm_flags & VM_EXEC))
+			vm_flags &= ~VM_MAYEXEC;
+		else
+			vm_flags &= ~VM_MAYWRITE;
+	}
+#endif
 
 	vma->vm_flags = vm_flags | mm->def_flags | VM_DONTEXPAND | VM_SOFTDIRTY;
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);

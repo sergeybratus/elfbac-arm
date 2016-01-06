@@ -515,7 +515,23 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 		} else {
 			if (kern_addr_valid(start)) {
 				unsigned long n;
+#ifdef CONFIG_PAX_USERCOPY
+				/* PaX: Exempt this copy from USERCOPY protection */
+				char *elf_buf;
+				mm_segment_t oldfs;
 
+				elf_buf = kzalloc(tsz, GFP_KERNEL);
+				if (!elf_buf)
+					return -ENOMEM;
+				oldfs = get_fs();
+				set_fs(KERNEL_DS);
+				n = __copy_from_user(elf_buf, (const void __user *)start, tsz);
+				set_fs(oldfs);
+				n = copy_to_user(buffer, elf_buf, tsz);
+				kfree(elf_buf);
+				if (n)
+					return -EFAULT;
+#else
 				n = copy_to_user(buffer, (char *)start, tsz);
 				/*
 				 * We cannot distinguish between fault on source
@@ -528,6 +544,7 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 								n))
 						return -EFAULT;
 				}
+#endif
 			} else {
 				if (clear_user(buffer, tsz))
 					return -EFAULT;

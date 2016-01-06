@@ -25,8 +25,20 @@ unsigned int arch_mod_section_prepend(struct module *mod, unsigned int section);
    sections.  Returns NULL on failure. */
 void *module_alloc(unsigned long size);
 
+#ifdef CONFIG_PAX_KERNEXEC
+void *module_alloc_exec(unsigned long size);
+#else
+#define module_alloc_exec(x) module_alloc(x)
+#endif
+
 /* Free memory returned from module_alloc. */
 void module_memfree(void *module_region);
+
+#ifdef CONFIG_PAX_KERNEXEC
+void module_memfree_exec(void *module_region);
+#else
+#define module_memfree_exec(x) module_memfree((x))
+#endif
 
 /*
  * Apply the given relocation to the (simplified) ELF.  Return -error

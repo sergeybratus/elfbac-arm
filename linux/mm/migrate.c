@@ -1483,9 +1483,15 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 	 * userid as the target process.
 	 */
 	tcred = __task_cred(task);
+        /*
+	 * PaX: We modify this credential check because it fails to return
+	 * a permission denied error when the current uid equals the target
+	 * uid.  This is trivially satisfied by suid binaries, allowing an
+	 * attacker to call this syscall multiple times to completely probe
+	 * the address space of their own suid processes
+	 */
 	if (!uid_eq(cred->euid, tcred->suid) && !uid_eq(cred->euid, tcred->uid) &&
-	    !uid_eq(cred->uid,  tcred->suid) && !uid_eq(cred->uid,  tcred->uid) &&
-	    !capable(CAP_SYS_NICE)) {
+	    !uid_eq(cred->uid,  tcred->suid) && !capable(CAP_SYS_NICE)) {
 		rcu_read_unlock();
 		err = -EPERM;
 		goto out;
@@ -1503,12 +1509,21 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 	if (!mm)
 		return -EINVAL;
 
+#ifdef CONFIG_PAX_ASLR
+	/* PaX: Implement the same check we perform for migrate_pages() */
+	if (mm != current->mm && (mm->pax_flags & MF_PAX_RANDMMAP)) {
+		err = -EPERM;
+		goto out_notask;
+	}
+#endif
+
 	if (nodes)
 		err = do_pages_move(mm, task_nodes, nr_pages, pages,
 				    nodes, status, flags);
 	else
 		err = do_pages_stat(mm, nr_pages, pages, status);
 
+out_notask:
 	mmput(mm);
 	return err;
 

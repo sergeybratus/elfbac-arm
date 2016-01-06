@@ -81,6 +81,11 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	if (len > TASK_SIZE)
 		return -ENOMEM;
 
+#ifdef CONFIG_PAX_RANDMMAP
+	/* PaX: Ignore address hints provided to mmap() */
+	if (!(mm->pax_flags & MF_PAX_RANDMMAP))
+#endif
+
 	if (addr) {
 		if (do_align)
 			addr = COLOUR_ALIGN(addr, pgoff);
@@ -133,6 +138,12 @@ arch_get_unmapped_area_topdown(struct file *filp, const unsigned long addr0,
 	}
 
 	/* requesting a specific address */
+
+#ifdef CONFIG_PAX_RANDMMAP
+	/* PaX: Ignore address hints provided to mmap() */
+	if (!(mm->pax_flags & MF_PAX_RANDMMAP))
+#endif
+
 	if (addr) {
 		if (do_align)
 			addr = COLOUR_ALIGN(addr, pgoff);
@@ -183,13 +194,32 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
 {
 	unsigned long random_factor = 0UL;
 
+
+#ifdef CONFIG_PAX_RANDMMAP
+	/* PaX: Override upstream ASLR */
+	if (!(mm->pax_flags & MF_PAX_RANDMMAP))
+#endif
 	if (current->flags & PF_RANDOMIZE)
 		random_factor = arch_mmap_rnd();
 
 	if (mmap_is_legacy()) {
 		mm->mmap_base = TASK_UNMAPPED_BASE + random_factor;
+
+#ifdef CONFIG_PAX_RANDMMAP
+		/* PaX: Apply random offset to bottom-up mmap base */
+		if (mm->pax_flags & MF_PAX_RANDMMAP)
+			mm->mmap_base += mm->delta_mmap;
+#endif
+
 		mm->get_unmapped_area = arch_get_unmapped_area;
 	} else {
+
+#ifdef CONFIG_PAX_RANDMMAP
+		/* PaX: Apply random offset to top-down mmap base */
+		if (mm->pax_flags & MF_PAX_RANDMMAP)
+			mm->mmap_base -= mm->delta_mmap + mm->delta_stack;
+#endif
+
 		mm->mmap_base = mmap_base(random_factor);
 		mm->get_unmapped_area = arch_get_unmapped_area_topdown;
 	}

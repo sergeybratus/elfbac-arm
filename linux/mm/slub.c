@@ -3388,6 +3388,36 @@ static size_t __ksize(const void *object)
 	return slab_ksize(page->slab_cache);
 }
 
+#ifdef CONFIG_PAX_USERCOPY
+const char *check_heap_object(const void *ptr, unsigned long n)
+{
+	struct page *page;
+	struct kmem_cache *s;
+	unsigned long offset;
+
+	if (ZERO_OR_NULL_PTR(ptr))
+		return "<null>";
+
+	if (!virt_addr_valid(ptr))
+		return NULL;
+
+	page = virt_to_head_page(ptr);
+
+	if (!PageSlab(page))
+		return NULL;
+
+	s = page->slab_cache;
+	if (!(s->flags & SLAB_USERCOPY))
+		return s->name;
+
+	offset = (ptr - page_address(page)) % s->size;
+	if (offset <= s->object_size && n <= s->object_size - offset)
+		return NULL;
+
+	return s->name;
+}
+#endif
+
 size_t ksize(const void *object)
 {
 	size_t size = __ksize(object);

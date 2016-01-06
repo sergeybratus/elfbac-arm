@@ -37,6 +37,11 @@ struct rnd_state {
 u32 prandom_u32_state(struct rnd_state *state);
 void prandom_bytes_state(struct rnd_state *state, void *buf, size_t nbytes);
 
+static inline unsigned long pax_get_random_long(void)
+{
+	return prandom_u32() + (sizeof(long) > 4 ? (unsigned long)prandom_u32() << 32 : 0);
+}
+
 /**
  * prandom_u32_max - returns a pseudo-random number in interval [0, ep_ro)
  * @ep_ro: right open interval endpoint

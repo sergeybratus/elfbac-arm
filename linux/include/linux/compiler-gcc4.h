@@ -42,6 +42,12 @@
 #endif /* GCC_VERSION >= 40300 */
 
 #if GCC_VERSION >= 40500
+
+#ifdef CONSTIFY_PLUGIN
+#define __no_const __attribute__((no_const))
+#define __do_const __attribute__((do_const))
+#endif
+
 /*
  * Mark a position in code as unreachable.  This can be used to
  * suppress control flow warnings after asm blocks that transfer

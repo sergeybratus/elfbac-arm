@@ -140,6 +140,20 @@ xfs_dir2_sf_getdents(
 		ino = dp->d_ops->sf_get_ino(sfp, sfep);
 		filetype = dp->d_ops->sf_get_ftype(sfep);
 		ctx->pos = off & 0x7fffffff;
+
+#ifdef CONFIG_PAX_USERCOPY
+                /*
+                 * PaX: Retain strict permissions on struct with inlined name
+                 * by using a temporary stack buffer
+                 */
+		if (dp->i_df.if_u1.if_data == dp->i_df.if_u2.if_inline_data) {
+			char name[sfep->namelen];
+			memcpy(name, sfep->name, sfep->namelen);
+			if (!dir_emit(ctx, name, sfep->namelen, ino, xfs_dir3_get_dtype(dp->i_mount, filetype)))
+				return 0;
+		} else
+#endif
+
 		if (!dir_emit(ctx, (char *)sfep->name, sfep->namelen, ino,
 			    xfs_dir3_get_dtype(dp->i_mount, filetype)))
 			return 0;

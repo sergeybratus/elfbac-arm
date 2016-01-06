@@ -1541,6 +1541,7 @@ static int configfs_readdir(struct file *file, struct dir_context *ctx)
 	for (p = q->next; p != &parent_sd->s_children; p = p->next) {
 		struct configfs_dirent *next;
 		const char *name;
+		char d_name[sizeof(next->s_dentry->d_iname)];
 		int len;
 		struct inode *inode = NULL;
 
@@ -1549,6 +1550,17 @@ static int configfs_readdir(struct file *file, struct dir_context *ctx)
 			continue;
 
 		name = configfs_get_name(next);
+#ifdef CONFIG_PAX_USERCOPY
+		/*
+		 * PaX: Retain strict permissions on struct with inlined name
+		 * by using a temporary stack buffer
+		 */
+		if (next->s_dentry && name == next->s_dentry->d_iname) {
+			len = next->s_dentry->d_name.len;
+			memcpy(d_name, name, len);
+			name = d_name;
+		} else
+#endif
 		len = strlen(name);
 
 		/*

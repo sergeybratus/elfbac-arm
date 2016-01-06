@@ -1452,7 +1452,7 @@ void __init kmem_cache_init(void)
 	 * structures first.  Without this, further allocations will bug.
 	 */
 	kmalloc_caches[INDEX_NODE] = create_kmalloc_cache("kmalloc-node",
-				kmalloc_size(INDEX_NODE), ARCH_KMALLOC_FLAGS);
+				kmalloc_size(INDEX_NODE), SLAB_USERCOPY | ARCH_KMALLOC_FLAGS);
 	slab_state = PARTIAL_NODE;
 
 	slab_early_init = 0;
@@ -4215,6 +4215,39 @@ static int __init slab_proc_init(void)
 	return 0;
 }
 module_init(slab_proc_init);
+#endif
+
+#ifdef CONFIG_PAX_USERCOPY
+const char *check_heap_object(const void *ptr, unsigned long n)
+{
+	struct page *page;
+	struct kmem_cache *cachep;
+	unsigned int objnr;
+	unsigned long offset;
+
+	if (ZERO_OR_NULL_PTR(ptr))
+		return "<null>";
+
+	if (!virt_addr_valid(ptr))
+		return NULL;
+
+	page = virt_to_head_page(ptr);
+
+	if (!PageSlab(page))
+		return NULL;
+
+	cachep = page->slab_cache;
+	if (!(cachep->flags & SLAB_USERCOPY))
+		return cachep->name;
+
+	objnr = obj_to_index(cachep, page, ptr);
+	BUG_ON(objnr >= cachep->num);
+	offset = ptr - index_to_obj(cachep, page, objnr) - obj_offset(cachep);
+	if (offset <= cachep->object_size && n <= cachep->object_size - offset)
+		return NULL;
+
+	return cachep->name;
+}
 #endif
 
 /**

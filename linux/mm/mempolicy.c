@@ -1385,9 +1385,15 @@ SYSCALL_DEFINE4(migrate_pages, pid_t, pid, unsigned long, maxnode,
 	 * userid as the target process.
 	 */
 	tcred = __task_cred(task);
+	/*
+	 * PaX: We modify this credential check because it fails to return
+	 * a permission denied error when the current uid equals the target
+	 * uid.  This is trivially satisfied by suid binaries, allowing an
+	 * attacker to call this syscall multiple times to completely probe
+	 * the address space of their own suid processes
+	 */
 	if (!uid_eq(cred->euid, tcred->suid) && !uid_eq(cred->euid, tcred->uid) &&
-	    !uid_eq(cred->uid,  tcred->suid) && !uid_eq(cred->uid,  tcred->uid) &&
-	    !capable(CAP_SYS_NICE)) {
+	    !uid_eq(cred->uid,  tcred->suid) && !capable(CAP_SYS_NICE)) {
 		rcu_read_unlock();
 		err = -EPERM;
 		goto out_put;
@@ -1417,6 +1423,20 @@ SYSCALL_DEFINE4(migrate_pages, pid_t, pid, unsigned long, maxnode,
 		err = -EINVAL;
 		goto out;
 	}
+
+#ifdef CONFIG_PAX_ASLR
+	/*
+	 * PaX: Similar to how we restrict various /proc entries, use the
+	 * same check here to block one task from calling migrate_pages
+	 * on another with ASLR enabled, as the return value leaks
+	 * the ASLR layout
+	 */
+	if (mm != current->mm && (mm->pax_flags & MF_PAX_RANDMMAP)) {
+		mmput(mm);
+		err = -EPERM;
+		goto out;
+	}
+#endif
 
 	err = do_migrate_pages(mm, old, new,
 		capable(CAP_SYS_NICE) ? MPOL_MF_MOVE_ALL : MPOL_MF_MOVE);

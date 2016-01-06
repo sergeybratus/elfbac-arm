@@ -4416,14 +4416,31 @@ EXPORT_SYMBOL(vfs_whiteout);
 
 int readlink_copy(char __user *buffer, int buflen, const char *link)
 {
+	char tmpbuf[64];
+	const char *newlink;
 	int len = PTR_ERR(link);
+
 	if (IS_ERR(link))
 		goto out;
 
 	len = strlen(link);
 	if (len > (unsigned) buflen)
 		len = buflen;
-	if (copy_to_user(buffer, link, len))
+
+
+#ifdef CONFIG_PAX_USERCOPY
+	/*
+	 * PaX: Retain strict permissions on copies from structs containing
+	 * inlined link names by copying them to a temporary stack buffer
+	 */
+	if (len < sizeof(tmpbuf)) {
+		memcpy(tmpbuf, link, len);
+		newlink = tmpbuf;
+	} else
+#endif
+		newlink = link;
+
+	if (copy_to_user(buffer, newlink, len))
 		len = -EFAULT;
 out:
 	return len;

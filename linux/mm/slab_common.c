@@ -836,7 +836,7 @@ void __init create_kmalloc_caches(unsigned long flags)
 	for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++) {
 		if (!kmalloc_caches[i]) {
 			kmalloc_caches[i] = create_kmalloc_cache(NULL,
-							1 << i, flags);
+							1 << i, SLAB_USERCOPY | flags);
 		}
 
 		/*
@@ -845,10 +845,10 @@ void __init create_kmalloc_caches(unsigned long flags)
 		 * earlier power of two caches
 		 */
 		if (KMALLOC_MIN_SIZE <= 32 && !kmalloc_caches[1] && i == 6)
-			kmalloc_caches[1] = create_kmalloc_cache(NULL, 96, flags);
+			kmalloc_caches[1] = create_kmalloc_cache(NULL, 96, SLAB_USERCOPY | flags);
 
 		if (KMALLOC_MIN_SIZE <= 64 && !kmalloc_caches[2] && i == 7)
-			kmalloc_caches[2] = create_kmalloc_cache(NULL, 192, flags);
+			kmalloc_caches[2] = create_kmalloc_cache(NULL, 192, SLAB_USERCOPY | flags);
 	}
 
 	/* Kmalloc array is now usable */

@@ -310,7 +310,11 @@ static void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	if (panic_on_oops)
 		panic("Fatal exception");
 	if (signr)
-		do_exit(signr);
+		/*
+		 * PaX: Kill off all threads of the responsible process,
+		 * not just the one causing the fault
+		*/
+		do_group_exit(signr);
 }
 
 /*
@@ -878,7 +882,16 @@ void __init early_trap_init(void *vectors_base)
 	kuser_init(vectors_base);
 
 	flush_icache_range(vectors, vectors + PAGE_SIZE * 2);
-	modify_domain(DOMAIN_USER, DOMAIN_CLIENT);
+
+#ifndef CONFIG_PAX_MEMORY_UDEREF
+	/*
+	 * PaX: Under UDEREF we don't want to allow this early-init code to
+	 * turn on access to userland, since we should never allow access
+	 * to userland except between pax_open/close_userland calls
+	 */
+	modify_domain(DOMAIN_USER, DOMAIN_USERCLIENT);
+#endif
+
 #else /* ifndef CONFIG_CPU_V7M */
 	/*
 	 * on V7-M there is no need to copy the vector table to a dedicated
