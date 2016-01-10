@@ -637,6 +637,7 @@ gcc-plugins:
 else
 gcc-plugins: ;
 endif
+else
 gcc-plugins:
 ifeq ($(call cc-ifversion, -ge, 0405, y), y)
 	$(error Your gcc installation does not support plugins.  If the necessary headers for plugin support are missing, they should be installed.  On Debian, apt-get install gcc-<ver>-plugin-dev.))
