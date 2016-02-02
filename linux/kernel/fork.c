@@ -986,6 +986,10 @@ static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
 	vmacache_flush(tsk);
 
 	if (clone_flags & CLONE_VM) {
+#ifdef CONFIG_ELFBAC
+		printk(KERN_ERR "CLONE_VM not currently supported for processes running under ELFbac");
+		return -EFAULT;
+#endif
 		atomic_inc(&oldmm->mm_users);
 		mm = oldmm;
 		goto good_mm;
