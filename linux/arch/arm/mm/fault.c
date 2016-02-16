@@ -329,13 +329,17 @@ good_area:
 			if (copy_size) {
 				fault = VM_FAULT_OOM;
 				copy_page = (unsigned char *)__get_free_page(GFP_TEMPORARY);
-				if (!copy_page)
+				if (!copy_page) {
+					spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 					goto out;
+				}
 
 				fault = VM_FAULT_BADACCESS;
 				if (copy_from_user(copy_page, (const void __user *)regs->ARM_sp,
-						   copy_size) != 0)
+						   copy_size) != 0) {
+					spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 					goto out;
+				}
 			}
 
 			mm->elfbac_policy->current_state = next_state;

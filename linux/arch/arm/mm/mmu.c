@@ -1472,7 +1472,7 @@ static void __init map_lowmem(void)
 			map.pfn = __phys_to_pfn(start);
 			map.virtual = __phys_to_virt(start);
 			map.length = end - start;
-			map.type = __MT_MEMORY_RW;
+			map.type = __MT_MEMORY_RWX;
 
 			create_mapping(&map);
 		} else {
@@ -1489,7 +1489,7 @@ static void __init map_lowmem(void)
 			map.pfn = __phys_to_pfn(kernel_x_start);
 			map.virtual = __phys_to_virt(kernel_x_start);
 			map.length = kernel_x_end - kernel_x_start;
-			map.type = MT_MEMORY_RWX;
+			map.type = __MT_MEMORY_RWX;
 
 			create_mapping(&map);
 
