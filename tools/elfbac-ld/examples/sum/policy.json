@@ -1,0 +1,50 @@
+{
+    "states": [
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "description": "*main.o(.text*)", "flags": "rx" },
+                { "description": "*main.o(.rodata*)", "flags": "r" },
+                { "description": "*main.o(.data*)", "flags": "rw" },
+                { "description": "*main.o(.bss*) *main.o(COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "sum",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*sum.o(.text*)", "flags": "rx" },
+                { "description": "*sum.o(.rodata*)", "flags": "r" },
+                { "description": "*sum.o(.data*)", "flags": "rw" },
+                { "description": "*sum.o(.bss*) *sum.o(COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "exit",
+            "stack": "stack",
+            "sections" : [
+                { "description": "*exit.o(.text*)", "flags": "rx" },
+                { "description": "*exit.o(.rodata*)", "flags": "r" },
+                { "description": "*exit.o(.data*)", "flags": "rw" },
+                { "description": "*exit.o(.bss*) *exit.o(COMMON)", "flags": "rw" }
+            ]
+        }
+],
+    "call_transitions": [
+        {
+            "from": "start",
+            "to": "sum",
+            "address": "sum",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "exit",
+            "address": "_exit",
+            "param_size": 0,
+            "return_size": 0
+        }
+    ]
+}
