@@ -113,7 +113,7 @@ def generate_binary_policy(policy, section_map, symbol_map, must_resolve=True, v
 
             name = section.get('name', state['name'])
             if section.get('create', True):
-                name = [None, '.rodata.', '.data', '.data.', None, '.text.', None, None][flags] + name
+                name = ['', '.rodata.', '.data', '.data.', '', '.text.', '', ''][flags] + name
                 if section['flags'] == 'rw' and is_bss(section['description']):
                     name = '.bss.' + state['name']
 
