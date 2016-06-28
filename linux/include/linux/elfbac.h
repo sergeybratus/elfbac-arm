@@ -53,7 +53,6 @@ struct elfbac_call_transition {
 
 struct elfbac_policy {
 	spinlock_t lock;
-	struct elfbac_state *current_state;
 	struct list_head states_list;
 	struct list_head data_transitions_list;
 	struct list_head call_transitions_list;

@@ -68,8 +68,8 @@ void show_pte(struct mm_struct *mm, unsigned long addr)
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		pr_alert("pgd = %p\n", mm->elfbac_policy->current_state->pgd);
-		pgd = mm->elfbac_policy->current_state->pgd + pgd_index(addr);
+		pr_alert("pgd = %p\n", current->current_state->pgd);
+		pgd = current->current_state->pgd + pgd_index(addr);
 	} else {
 		pr_alert("pgd = %p\n", mm->pgd);
 		pgd = pgd_offset(mm, addr);
@@ -289,7 +289,7 @@ good_area:
 				access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
 			} else {
 				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, access: %x\n",
-				       mm->elfbac_policy->current_state->id, addr, regs->ARM_pc, access);
+				       current->current_state->id, addr, regs->ARM_pc, access);
 
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 				goto out;
@@ -313,16 +313,16 @@ good_area:
 				}
 			}
 
-			mm->elfbac_policy->current_state = next_state;
+			current->current_state = next_state;
 
-			asid = atomic64_read(&mm->elfbac_policy->current_state->context.id);
+			asid = atomic64_read(&current->current_state->context.id);
 			atomic64_set(&mm->context.id, asid);
 
 		}
 
 		if (is_stack) {
 			orig_pgd = mm->pgd;
-			src_pgd = mm->elfbac_policy->stacks[mm->elfbac_policy->current_state->stack_id];
+			src_pgd = mm->elfbac_policy->stacks[current->current_state->stack_id];
 
 			mm->pgd = src_pgd;
 			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
@@ -332,7 +332,7 @@ good_area:
 			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 		}
 
-		if (elfbac_copy_mapping(mm, mm->elfbac_policy->current_state->pgd, src_pgd,
+		if (elfbac_copy_mapping(mm, current->current_state->pgd, src_pgd,
 					vma, addr, access_flags) != 0)
 			fault = VM_FAULT_BADACCESS;
 

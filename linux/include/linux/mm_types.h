@@ -382,7 +382,7 @@ struct mm_struct {
 						 */
 #ifdef CONFIG_ELFBAC
 	struct elfbac_policy *elfbac_policy;	/* ELFbac policy controlling
-						 * what actiont to take on page
+						 * what action to take on page
 						 * faults
 						 */
 #endif

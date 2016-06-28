@@ -234,7 +234,7 @@ void check_and_switch_context(struct mm_struct *mm, struct task_struct *tsk)
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy)
-		pgd = mm->elfbac_policy->current_state->pgd;
+		pgd = tsk->current_state->pgd;
 	else
 		pgd = mm->pgd;
 #else
