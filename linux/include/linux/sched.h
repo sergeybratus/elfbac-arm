@@ -1729,7 +1729,7 @@ struct task_struct {
 	unsigned long	task_state_change;
 #endif
 #ifdef CONFIG_ELFBAC
-	struct elfbac_state *current_state;
+	struct elfbac_state *elfbac_state;
 #endif
 };
 

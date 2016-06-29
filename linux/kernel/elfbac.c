@@ -641,7 +641,7 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 	for (i = 1; i < out->num_stacks; i++)
 		out->stacks[i] = pgd_alloc(mm);
 
-	current->current_state = list_entry(out->states_list.next, struct elfbac_state, list);
+	current->elfbac_state = list_entry(out->states_list.next, struct elfbac_state, list);
 	spin_unlock_irqrestore(&out->lock, flags);
 	return 0;
 
@@ -824,6 +824,12 @@ err:
 	return retval;
 }
 
+int elfbac_state_clone(struct elfbac_state *orig, struct elfbac_state *new)
+{
+	memcpy(orig, new, sizeof(struct elfbac_state));
+	return 0;
+}
+
 static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsigned long id)
 {
 	struct elfbac_state *state;
@@ -852,21 +858,21 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 
 	// Check for return from a call transition
 	// TODO: Need 1 return_state_id per state per task for shared policies
-	if ((mask & VM_EXEC) && addr == (current->current_state->return_addr & ~1) &&
-	    current->current_state->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
-		state = get_state_by_id(policy, current->current_state->return_state_id);
+	if ((mask & VM_EXEC) && addr == (current->elfbac_state->return_addr & ~1) &&
+	    current->elfbac_state->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
+		state = get_state_by_id(policy, current->elfbac_state->return_state_id);
 		if (state) {
-			*copy_size = current->current_state->return_size;
+			*copy_size = current->elfbac_state->return_size;
 			*next_state = state;
-			current->current_state->return_addr = 0;
-			current->current_state->return_size = 0;
-			current->current_state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
+			current->elfbac_state->return_addr = 0;
+			current->elfbac_state->return_size = 0;
+			current->elfbac_state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
 			goto good_transition;
 		}
 	}
 
 	// Common case, addr is allowed in current state
-	list_for_each_entry(section, &current->current_state->sections_list, list) {
+	list_for_each_entry(section, &current->elfbac_state->sections_list, list) {
 		start = section->base;
 		end = start + section->size;
 
@@ -879,7 +885,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	// Check for normal state transitions (call and data)
 	if (mask & VM_EXEC) {
 		list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
-			if (call_transition->from == current->current_state->id) {
+			if (call_transition->from == current->elfbac_state->id) {
 				state = get_state_by_id(policy, call_transition->to);
 
 				if (!state)
@@ -893,14 +899,14 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 					*copy_size = call_transition->param_size;
 					state->return_addr = lr & ~1;
 					state->return_size = call_transition->return_size;
-					state->return_state_id = current->current_state->id;
+					state->return_state_id = current->elfbac_state->id;
 					goto good_transition;
 				}
 			}
 		}
 	} else {
 		list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
-			if (data_transition->from == current->current_state->id) {
+			if (data_transition->from == current->elfbac_state->id) {
 				start = data_transition->base;
 				end = start + data_transition->size;
 

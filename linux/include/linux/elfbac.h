@@ -65,6 +65,7 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy);
 int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig,
 		struct elfbac_policy *new);
+int elfbac_state_clone(struct elfbac_state *orig, struct elfbac_state *new);
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		unsigned int mask, unsigned long lr,
 		struct elfbac_state **next_state, unsigned long *flags,

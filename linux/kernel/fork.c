@@ -926,15 +926,24 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 #ifdef CONFIG_ELFBAC
 	if (oldmm->elfbac_policy) {
 		err = -ENOMEM;
+		mm->elfbac_policy = NULL;
+		tsk->elfbac_state = NULL;
+
 		mm->elfbac_policy = kmalloc(sizeof(struct elfbac_policy), GFP_KERNEL);
 		if (!mm->elfbac_policy)
 			goto free_pt;
 
 		err = elfbac_policy_clone(mm, oldmm->elfbac_policy, mm->elfbac_policy);
-		if (err) {
-			kfree(mm->elfbac_policy);
+		if (err)
 			goto free_pt;
-		}
+
+		tsk->elfbac_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL);
+		if (!tsk->elfbac_state)
+			goto free_pt;
+
+		err = elfbac_state_clone(current->elfbac_state, tsk->elfbac_state);
+		if (err)
+			goto free_pt;
 	}
 #endif
 
@@ -951,6 +960,13 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 	return mm;
 
 free_pt:
+#ifdef CONFIG_ELFBAC
+	kfree(mm->elfbac_policy);
+	mm->elfbac_policy = NULL;
+	kfree(tsk->elfbac_state);
+	tsk->elfbac_state = NULL;
+#endif
+
 	/* don't put binfmt in mmput, we haven't got module yet */
 	mm->binfmt = NULL;
 	mmput(mm);
@@ -988,12 +1004,21 @@ static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
 	if (clone_flags & CLONE_VM) {
 #ifdef CONFIG_ELFBAC
 		if (oldmm->elfbac_policy) {
-			printk(KERN_ERR "CLONE_VM not currently supported for processes running under ELFbac");
-			return -EFAULT;
+			retval = -ENOMEM;
+			tsk->elfbac_state = NULL;
+
+			tsk->elfbac_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL);
+			if (!tsk->elfbac_state)
+				goto fail_nomem;
+
+			retval = elfbac_state_clone(current->elfbac_state, tsk->elfbac_state);
+			if (retval)
+				goto fail_nomem;
 		}
 #endif
 		atomic_inc(&oldmm->mm_users);
 		mm = oldmm;
+
 		goto good_mm;
 	}
 
@@ -1008,6 +1033,10 @@ good_mm:
 	return 0;
 
 fail_nomem:
+#ifdef CONFIG_ELFBAC
+	kfree(tsk->elfbac_state);
+	tsk->elfbac_state = NULL;
+#endif
 	return retval;
 }
 
