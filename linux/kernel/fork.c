@@ -681,6 +681,7 @@ void __mmdrop(struct mm_struct *mm)
 	mmu_notifier_mm_destroy(mm);
 	check_mm(mm);
 	free_mm(mm);
+
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
 
@@ -696,10 +697,6 @@ void mmput(struct mm_struct *mm)
 		exit_aio(mm);
 		ksm_exit(mm);
 		khugepaged_exit(mm); /* must run before exit_mmap */
-#ifdef CONFIG_ELFBAC
-	if (mm->elfbac_policy)
-		elfbac_policy_destroy(mm, mm->elfbac_policy);
-#endif
 		exit_mmap(mm);
 		set_mm_exe_file(mm, NULL);
 		if (!list_empty(&mm->mmlist)) {
@@ -923,30 +920,6 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 	if (!mm_init(mm, tsk))
 		goto fail_nomem;
 
-#ifdef CONFIG_ELFBAC
-	if (oldmm->elfbac_policy) {
-		err = -ENOMEM;
-		mm->elfbac_policy = NULL;
-		tsk->elfbac_state = NULL;
-
-		mm->elfbac_policy = kmalloc(sizeof(struct elfbac_policy), GFP_KERNEL);
-		if (!mm->elfbac_policy)
-			goto free_pt;
-
-		err = elfbac_policy_clone(mm, oldmm->elfbac_policy, mm->elfbac_policy);
-		if (err)
-			goto free_pt;
-
-		tsk->elfbac_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL);
-		if (!tsk->elfbac_state)
-			goto free_pt;
-
-		err = elfbac_state_clone(current->elfbac_state, tsk->elfbac_state);
-		if (err)
-			goto free_pt;
-	}
-#endif
-
 	err = dup_mmap(mm, oldmm);
 	if (err)
 		goto free_pt;
@@ -957,14 +930,26 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 	if (mm->binfmt && !try_module_get(mm->binfmt->module))
 		goto free_pt;
 
+#ifdef CONFIG_ELFBAC
+	if (oldmm->elfbac_policy) {
+		err = -ENOMEM;
+
+		mm->elfbac_policy = kmalloc(sizeof(struct elfbac_policy), GFP_KERNEL);
+		if (!mm->elfbac_policy)
+			goto free_pt;
+
+		err = elfbac_policy_clone(mm, oldmm->elfbac_policy, mm->elfbac_policy);
+		if (err)
+			goto free_pt;
+	}
+#endif
+
 	return mm;
 
 free_pt:
 #ifdef CONFIG_ELFBAC
 	kfree(mm->elfbac_policy);
 	mm->elfbac_policy = NULL;
-	kfree(tsk->elfbac_state);
-	tsk->elfbac_state = NULL;
 #endif
 
 	/* don't put binfmt in mmput, we haven't got module yet */
@@ -1002,20 +987,6 @@ static int copy_mm(unsigned long clone_flags, struct task_struct *tsk)
 	vmacache_flush(tsk);
 
 	if (clone_flags & CLONE_VM) {
-#ifdef CONFIG_ELFBAC
-		if (oldmm->elfbac_policy) {
-			retval = -ENOMEM;
-			tsk->elfbac_state = NULL;
-
-			tsk->elfbac_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL);
-			if (!tsk->elfbac_state)
-				goto fail_nomem;
-
-			retval = elfbac_state_clone(current->elfbac_state, tsk->elfbac_state);
-			if (retval)
-				goto fail_nomem;
-		}
-#endif
 		atomic_inc(&oldmm->mm_users);
 		mm = oldmm;
 
@@ -1033,12 +1004,21 @@ good_mm:
 	return 0;
 
 fail_nomem:
-#ifdef CONFIG_ELFBAC
-	kfree(tsk->elfbac_state);
-	tsk->elfbac_state = NULL;
-#endif
 	return retval;
 }
+
+#ifdef CONFIG_ELFBAC
+static int copy_elfbac_state(struct task_struct *tsk)
+{
+	if (!tsk->elfbac_state)
+		return 0;
+
+	if ((tsk->elfbac_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL)) == NULL)
+		return -ENOMEM;
+
+	return elfbac_state_clone(current->elfbac_state, tsk->elfbac_state);
+}
+#endif
 
 static int copy_fs(unsigned long clone_flags, struct task_struct *tsk)
 {
@@ -1499,6 +1479,11 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	retval = copy_mm(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_signal;
+#ifdef CONFIG_ELFBAC
+	retval = copy_elfbac_state(p);
+	if (retval)
+		goto bad_fork_cleanup_mm;
+#endif
 	retval = copy_namespaces(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_mm;

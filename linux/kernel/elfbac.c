@@ -738,7 +738,7 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct
 		new_state->return_state_id = state->return_state_id;
 		INIT_LIST_HEAD(&new_state->list);
 		INIT_LIST_HEAD(&new_state->sections_list);
-		list_add_tail(&state->list, &new->states_list);
+		list_add_tail(&new_state->list, &new->states_list);
 
 		list_for_each_entry(section, &state->sections_list, list) {
 			retval = -ENOMEM;
@@ -752,7 +752,7 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct
 			       sizeof(struct elfbac_section));
 
 			INIT_LIST_HEAD(&new_section->list);
-			list_add_tail(&section->list, &new_state->sections_list);
+			list_add_tail(&new_section->list, &new_state->sections_list);
 
 			new_section = NULL;
 		}

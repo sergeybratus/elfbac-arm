@@ -18,7 +18,7 @@ def is_bss(description):
     sections = description.split(' ')
     return all(re.match(r'.*\((.bss|COMMON).*\)', s) for s in sections)
 
-def render_linker_script(policy, platform, policy_len):
+def render_linker_script(policy, platform, policy_len, thumb):
     states = policy['states']
     templates_dir = os.path.join(os.path.dirname(sys.argv[0]), 'templates')
     renderer = pystache.Renderer(search_dirs=[templates_dir])
@@ -64,7 +64,8 @@ def render_linker_script(policy, platform, policy_len):
         'text_sections': text_sections,
         'rodata_sections': rodata_sections,
         'data_sections': data_sections,
-        'bss_sections': bss_sections
+        'bss_sections': bss_sections,
+        'thumb': 0 if not thumb else 1
     }
 
     return renderer.render_name(platform, data)
@@ -217,6 +218,8 @@ def main(argv=None):
     parser.add_argument('-c', '--use-compiler', action='store_true',
             help='If specified, using the C compiler driver to link the program, so modify '
                 'altered arguments appropriately')
+    parser.add_argument('-t', '--thumb', action='store_true',
+            help='If specified, entry point is thumb code')
     parser.add_argument('-v', '--verbose', action='store_true',
             help='If specified, provide verbose output')
     parser.add_argument('linker_args', metavar='LINKER ARGS', nargs=argparse.REMAINDER)
@@ -233,7 +236,7 @@ def main(argv=None):
             output_file = args.linker_args[i + 1]
 
     policy_len = len(generate_binary_policy(policy, {}, {}, False))
-    linker_script = render_linker_script(policy, args.arch, policy_len)
+    linker_script = render_linker_script(policy, args.arch, policy_len, args.thumb)
     if args.verbose:
         print linker_script
 
@@ -248,6 +251,7 @@ def main(argv=None):
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
         section_map = parse_link_map(link_map)
+        print section_map
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
     symbol_map = {}

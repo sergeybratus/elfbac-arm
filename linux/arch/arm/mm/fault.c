@@ -283,9 +283,15 @@ good_area:
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
 				access_flags = VM_READ | VM_WRITE;
 				is_stack = 1;
-			} else if (!vma->vm_file || addr > mm->start_stack) {
+			} else if (!vma->vm_file || !(vma->vm_file->f_mode &
+				   FMODE_EXEC) || addr > mm->start_stack) {
 				// We don't label anonymous pages from mmap, so forward their
 				// permissions to all states. Also handle vdso pages above stack.
+				//
+				// Clause (vma->vm_file->f_mode & FMODE_EXEC) is
+				// a temporary fix for programs which mmap files
+				// to read, need to figure out best way to
+				// handle this use case.
 				access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
 			} else {
 				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, access: %x\n",
