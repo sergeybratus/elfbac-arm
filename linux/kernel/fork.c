@@ -1010,13 +1010,15 @@ fail_nomem:
 #ifdef CONFIG_ELFBAC
 static int copy_elfbac_state(struct task_struct *tsk)
 {
-	if (!tsk->elfbac_state)
+	unsigned long id;
+
+	if (!current->elfbac_state)
 		return 0;
 
-	if ((tsk->elfbac_state = kmalloc(sizeof(struct elfbac_state), GFP_KERNEL)) == NULL)
-		return -ENOMEM;
+	id = current->elfbac_state->id;
+	tsk->elfbac_state = elfbac_state_by_id(tsk->mm->elfbac_policy, id);
 
-	return elfbac_state_clone(current->elfbac_state, tsk->elfbac_state);
+	return 0;
 }
 #endif
 

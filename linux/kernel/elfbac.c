@@ -705,7 +705,7 @@ void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 
 int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct elfbac_policy *new)
 {
-	int retval;
+	int i, retval;
 
 	unsigned long flags;
 	struct elfbac_state *state, *new_state = NULL;
@@ -732,12 +732,17 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct
 		if (!new_state)
 			goto err;
 
-		memset(new_state, '\0', sizeof(struct elfbac_state));
+		memcpy(new_state, state, sizeof(struct elfbac_state));
 
-		new_state->id = state->id;
-		new_state->return_state_id = state->return_state_id;
+		new_state->pgd = pgd_alloc(mm);
+		if (!new_state->pgd)
+			goto err;
+
+		memset(&new_state->context, 0, sizeof(mm_context_t));
+
 		INIT_LIST_HEAD(&new_state->list);
 		INIT_LIST_HEAD(&new_state->sections_list);
+
 		list_add_tail(&new_state->list, &new->states_list);
 
 		list_for_each_entry(section, &state->sections_list, list) {
@@ -805,7 +810,9 @@ int elfbac_policy_clone(struct mm_struct *mm, struct elfbac_policy *orig, struct
 	new->stacks = kmalloc(sizeof(pgd_t *) * new->num_stacks, GFP_KERNEL);
 	if (!new->stacks)
 		goto err;
-	memset(&new->stacks, '\0', sizeof(pgd_t *) * new->num_stacks);
+	new->stacks[0] = mm->pgd;
+	for (i = 1; i < new->num_stacks; i++)
+		new->stacks[i] = pgd_alloc(mm);
 
 	spin_unlock(&new->lock);
 	spin_unlock_irqrestore(&orig->lock, flags);
@@ -824,13 +831,7 @@ err:
 	return retval;
 }
 
-int elfbac_state_clone(struct elfbac_state *orig, struct elfbac_state *new)
-{
-	memcpy(orig, new, sizeof(struct elfbac_state));
-	return 0;
-}
-
-static struct elfbac_state *get_state_by_id(struct elfbac_policy *policy, unsigned long id)
+struct elfbac_state *elfbac_state_by_id(struct elfbac_policy *policy, unsigned long id)
 {
 	struct elfbac_state *state;
 
@@ -860,7 +861,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	// TODO: Need 1 return_state_id per state per task for shared policies
 	if ((mask & VM_EXEC) && addr == (current->elfbac_state->return_addr & ~1) &&
 	    current->elfbac_state->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
-		state = get_state_by_id(policy, current->elfbac_state->return_state_id);
+		state = elfbac_state_by_id(policy, current->elfbac_state->return_state_id);
 		if (state) {
 			*copy_size = current->elfbac_state->return_size;
 			*next_state = state;
@@ -886,7 +887,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	if (mask & VM_EXEC) {
 		list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
 			if (call_transition->from == current->elfbac_state->id) {
-				state = get_state_by_id(policy, call_transition->to);
+				state = elfbac_state_by_id(policy, call_transition->to);
 
 				if (!state)
 					continue;
@@ -910,7 +911,7 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				start = data_transition->base;
 				end = start + data_transition->size;
 
-				state = get_state_by_id(policy, data_transition->to);
+				state = elfbac_state_by_id(policy, data_transition->to);
 
 				if (!state)
 					continue;
