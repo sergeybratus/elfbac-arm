@@ -1,0 +1,23 @@
+{
+    "states": [
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "name": ".headers", "create": false, "flags": "r", "base": 65536, "size": 276 },
+                { "name": ".init", "create": false, "flags": "rx" },
+                { "description": "*(.text*)", "flags": "rx" },
+                { "name": ".fini", "create": false, "flags": "rx" },
+                { "description": "*(.rodata*)", "flags": "r" },
+                { "name": ".ARM.exidx", "create": false, "flags": "r" },
+                { "name": ".eh_frame", "create": false, "flags": "r" },
+                { "name": ".init_array", "create": false, "flags": "rw" },
+                { "name": ".fini_array", "create": false, "flags": "rw" },
+                { "name": ".jcr", "create": false, "flags": "rw" },
+                { "description": "*(.data*)", "flags": "rw" },
+                { "description": "*(.bss* COMMON)", "flags": "rw" }
+            ]
+        }
+    ]
+}
+

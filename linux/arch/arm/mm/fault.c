@@ -283,12 +283,12 @@ good_area:
 			if ((vma->vm_flags & VM_GROWSDOWN)) {
 				access_flags = VM_READ | VM_WRITE;
 				is_stack = 1;
-			} else if (!vma->vm_file || !(vma->vm_file->f_mode & FMODE_EXEC) ||
+			} else if (!vma->vm_file || !(vma->vm_file->f_flags & FMODE_EXEC) ||
 				   addr > mm->start_stack) {
 				// We don't label anonymous pages from mmap, so forward their
 				// permissions to all states. Also handle vdso pages above stack.
 				//
-				// Clause !(vma->vm_file->f_mode & FMODE_EXEC)
+				// Clause !(vma->vm_file->f_flags & FMODE_EXEC)
 				// lets us handle files mapped in for
 				// reading/writing, potentially consider better
 				// ways to handle thse mappings.
