@@ -250,8 +250,11 @@ def main(argv=None):
         cmd = [args.linker] + args.linker_args + \
                 ['-Wl,' + arg if args.use_compiler else arg for arg in ['-M', '-T', f.name]]
         link_map = subprocess.check_output(cmd)
+        with open('link_map.txt', 'w') as f:
+            print >>f, link_map
         section_map = parse_link_map(link_map)
-        print section_map
+        for k, v in section_map.iteritems():
+            print '%s : %x, %x' % (k, v[0], v[1])
 
     # TODO: make sure our heuristic for finding this doesn't clobber something
     symbol_map = {}

@@ -76,6 +76,7 @@
 #include <linux/compiler.h>
 #include <linux/sysctl.h>
 #include <linux/elfbac.h>
+#include <linux/delay.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -934,28 +935,9 @@ static struct mm_struct *dup_mm(struct task_struct *tsk)
 	if (mm->binfmt && !try_module_get(mm->binfmt->module))
 		goto free_pt;
 
-#ifdef CONFIG_ELFBAC
-	if (oldmm->elfbac_policy) {
-		err = -ENOMEM;
-
-		mm->elfbac_policy = kmalloc(sizeof(struct elfbac_policy), GFP_KERNEL);
-		if (!mm->elfbac_policy)
-			goto free_pt;
-
-		err = elfbac_policy_clone(mm, oldmm->elfbac_policy, mm->elfbac_policy);
-		if (err)
-			goto free_pt;
-	}
-#endif
-
 	return mm;
 
 free_pt:
-#ifdef CONFIG_ELFBAC
-	kfree(mm->elfbac_policy);
-	mm->elfbac_policy = NULL;
-#endif
-
 	/* don't put binfmt in mmput, we haven't got module yet */
 	mm->binfmt = NULL;
 	mmput(mm);
@@ -1012,15 +994,43 @@ fail_nomem:
 }
 
 #ifdef CONFIG_ELFBAC
+static int copy_elfbac_policy(struct task_struct *tsk)
+{
+	int err;
+	struct elfbac_policy *policy;
+
+	if (!current || !current->mm || !current->mm->elfbac_policy)
+		return 0;
+
+	policy = kmalloc(sizeof(struct elfbac_policy), GFP_KERNEL);
+	if (!policy)
+		return -ENOMEM;
+
+	err = elfbac_policy_clone(tsk->mm, current->mm->elfbac_policy, policy);
+	if (err) {
+		kfree(policy);
+		return err;
+	}
+
+	tsk->mm->elfbac_policy = policy;
+
+	return 0;
+}
+
 static int copy_elfbac_state(struct task_struct *tsk)
 {
 	unsigned long id;
 
-	if (!current->elfbac_state)
+	if (!current->elfbac_state || !tsk->mm->elfbac_policy) {
+		tsk->elfbac_state = NULL;
 		return 0;
+	}
 
 	id = current->elfbac_state->id;
 	tsk->elfbac_state = elfbac_state_by_id(tsk->mm->elfbac_policy, id);
+
+	//FIXME: Register corruption
+	mdelay(100);
 
 	return 0;
 }
@@ -1485,11 +1495,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	retval = copy_mm(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_signal;
-#ifdef CONFIG_ELFBAC
-	retval = copy_elfbac_state(p);
-	if (retval)
-		goto bad_fork_cleanup_mm;
-#endif
 	retval = copy_namespaces(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_mm;
@@ -1499,6 +1504,14 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	retval = copy_thread(clone_flags, stack_start, stack_size, p);
 	if (retval)
 		goto bad_fork_cleanup_io;
+#ifdef CONFIG_ELFBAC
+	retval = copy_elfbac_policy(p);
+	if (retval)
+		goto bad_fork_cleanup_io;
+	retval = copy_elfbac_state(p);
+	if (retval)
+		goto bad_fork_cleanup_io;
+#endif
 
 	if (pid != &init_struct_pid) {
 		pid = alloc_pid(p->nsproxy->pid_ns_for_children);
@@ -1753,6 +1766,7 @@ long do_fork(unsigned long clone_flags,
 
 	p = copy_process(clone_flags, stack_start, stack_size,
 			 child_tidptr, NULL, trace);
+
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
 	 * might get invalid after that point, if the thread exits quickly.
