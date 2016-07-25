@@ -138,6 +138,7 @@
 extern char *__progname;
 
 /* Server configuration options. */
+__attribute__((section(".bss.shared")))
 ServerOptions options;
 
 /* Name of the server configuration file. */
@@ -149,18 +150,23 @@ char *config_file_name = _PATH_SERVER_CONFIG_FILE;
  * log, the daemon will not go to background, and will exit after processing
  * the first connection.
  */
+__attribute__((section(".bss.shared")))
 int debug_flag = 0;
 
 /* Flag indicating that the daemon should only test the configuration and keys. */
+__attribute__((section(".bss.shared")))
 int test_flag = 0;
 
 /* Flag indicating that the daemon is being started from inetd. */
+__attribute__((section(".bss.shared")))
 int inetd_flag = 0;
 
 /* Flag indicating that sshd should not detach and become a daemon. */
+__attribute__((section(".bss.shared")))
 int no_daemon_flag = 0;
 
 /* debug goes to stderr unless inetd_flag is set */
+__attribute__((section(".bss.shared")))
 int log_stderr = 0;
 
 /* Saved arguments to main(). */
@@ -189,6 +195,7 @@ char *client_version_string = NULL;
 char *server_version_string = NULL;
 
 /* Daemon's agent connection */
+__attribute__((section(".data.shared")))
 int auth_sock = -1;
 int have_agent = 0;
 
@@ -200,6 +207,7 @@ int have_agent = 0;
  * have access to the internals of them, and locking just the structure is
  * not very useful.  Currently, memory locking is not implemented.
  */
+__attribute__((section(".data.sensitive_data")))
 struct {
 	Key	*server_key;		/* ephemeral server key */
 	Key	*ssh1_host_key;		/* ssh1 host key */
@@ -225,10 +233,13 @@ static volatile sig_atomic_t received_sigterm = 0;
 u_char session_id[16];
 
 /* same for ssh2 */
+__attribute__((section(".bss.shared")))
 u_char *session_id2 = NULL;
+__attribute__((section(".bss.shared")))
 u_int session_id2_len = 0;
 
 /* record remote hostname or ip */
+__attribute__((section(".data.shared")))
 u_int utmp_len = HOST_NAME_MAX+1;
 
 /* options.max_startup sized array of fd ints */
@@ -236,23 +247,30 @@ int *startup_pipes = NULL;
 int startup_pipe;		/* in child */
 
 /* variables used for privilege separation */
+__attribute__((section(".data.shared")))
 int use_privsep = -1;
+__attribute__((section(".bss.shared")))
 struct monitor *pmonitor = NULL;
+__attribute__((section(".data.shared")))
 int privsep_is_preauth = 1;
 
 /* global authentication context */
+__attribute__((section(".bss.shared")))
 Authctxt *the_authctxt = NULL;
 
 /* sshd_config buffer */
+__attribute__((section(".bss.shared")))
 Buffer cfg;
 
 /* message to be displayed after login */
+__attribute__((section(".bss.shared")))
 Buffer loginmsg;
 
 /* Unprivileged user */
 struct passwd *privsep_pw = NULL;
 
 /* Prototypes for various functions defined later in this file. */
+__attribute__((section(".text.packet")))
 void destroy_sensitive_data(void);
 void demote_sensitive_data(void);
 
@@ -560,6 +578,7 @@ sshd_exchange_identification(struct ssh *ssh, int sock_in, int sock_out)
 }
 
 /* Destroy the host and server keys.  They will no longer be needed. */
+__attribute__((section(".text.packet")))
 void
 destroy_sensitive_data(void)
 {
@@ -852,6 +871,7 @@ list_hostkey_types(void)
 	return ret;
 }
 
+__attribute__((section(".text.packet")))
 static Key *
 get_hostkey_by_type(int type, int nid, int need_private, struct ssh *ssh)
 {
@@ -880,18 +900,21 @@ get_hostkey_by_type(int type, int nid, int need_private, struct ssh *ssh)
 	return NULL;
 }
 
+__attribute__((section(".text.packet")))
 Key *
 get_hostkey_public_by_type(int type, int nid, struct ssh *ssh)
 {
 	return get_hostkey_by_type(type, nid, 0, ssh);
 }
 
+__attribute__((section(".text.packet")))
 Key *
 get_hostkey_private_by_type(int type, int nid, struct ssh *ssh)
 {
 	return get_hostkey_by_type(type, nid, 1, ssh);
 }
 
+__attribute__((section(".text.packet")))
 Key *
 get_hostkey_by_index(int ind)
 {
@@ -900,6 +923,7 @@ get_hostkey_by_index(int ind)
 	return (sensitive_data.host_keys[ind]);
 }
 
+__attribute__((section(".text.packet")))
 Key *
 get_hostkey_public_by_index(int ind, struct ssh *ssh)
 {
@@ -908,6 +932,7 @@ get_hostkey_public_by_index(int ind, struct ssh *ssh)
 	return (sensitive_data.host_pubkeys[ind]);
 }
 
+__attribute__((section(".text.packet")))
 int
 get_hostkey_index(Key *key, int compare, struct ssh *ssh)
 {
@@ -2570,6 +2595,7 @@ do_ssh1_kex(void)
 }
 #endif
 
+__attribute__((section(".text.crypto")))
 int
 sshd_hostkey_sign(Key *privkey, Key *pubkey, u_char **signature, size_t *slen,
     const u_char *data, size_t dlen, const char *alg, u_int flag)
@@ -2672,6 +2698,7 @@ do_ssh2_kex(void)
 }
 
 /* server specific fatal cleanup */
+__attribute__((section(".text.shared")))
 void
 cleanup_exit(int i)
 {

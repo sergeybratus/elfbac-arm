@@ -611,6 +611,7 @@ auth_openprincipals(const char *file, struct passwd *pw, int strict_modes)
 	    "authorized principals");
 }
 
+__attribute__((section(".text.shared")))
 struct passwd *
 getpwnamallow(const char *user)
 {

@@ -43,7 +43,7 @@ PATHS= -DSSHDIR=\"$(sysconfdir)\" \
 CC=arm-musl-linuxeabihf-gcc
 LD=arm-musl-linuxeabihf-ld
 CFLAGS=-g -O2 -Wall -Wpointer-arith -Wuninitialized -Wsign-compare -Wformat-security -Wsizeof-pointer-memaccess -Wno-pointer-sign -Wno-unused-result -fno-strict-aliasing -D_FORTIFY_SOURCE=2 -ftrapv -fno-builtin-memset -fstack-protector-strong 
-CPPFLAGS=-I. -I$(srcdir) -I/home/mjkoo/blackhat/openssh-portable/../openssl-1.0.1t/build//include -I/home/mjkoo/blackhat/openssh-portable/../zlib-1.2.8/build//include  $(PATHS) -DHAVE_CONFIG_H
+CPPFLAGS=-I. -I$(srcdir) -I/home/mjkoo/blackhat/openssl-1.0.1t/build//include -I/home/mjkoo/blackhat/zlib-1.2.8/build//include  $(PATHS) -DHAVE_CONFIG_H
 LIBS=-lcrypto -lz  -lcrypt
 K5LIBS=
 GSSLIBS=

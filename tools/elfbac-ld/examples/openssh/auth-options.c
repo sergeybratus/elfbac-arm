@@ -40,23 +40,33 @@
 #include "auth.h"
 
 /* Flags set authorized_keys flags */
+__attribute__((section(".bss.shared")))
 int no_port_forwarding_flag = 0;
+__attribute__((section(".bss.shared")))
 int no_agent_forwarding_flag = 0;
+__attribute__((section(".bss.shared")))
 int no_x11_forwarding_flag = 0;
+__attribute__((section(".bss.shared")))
 int no_pty_flag = 0;
+__attribute__((section(".bss.shared")))
 int no_user_rc = 0;
+__attribute__((section(".bss.shared")))
 int key_is_cert_authority = 0;
 
 /* "command=" option. */
+__attribute__((section(".bss.shared")))
 char *forced_command = NULL;
 
 /* "environment=" options. */
+__attribute__((section(".bss.shared")))
 struct envstring *custom_environment = NULL;
 
 /* "tunnel=" option. */
+__attribute__((section(".bss.shared")))
 int forced_tun_device = -1;
 
 /* "principals=" option. */
+__attribute__((section(".bss.shared")))
 char *authorized_principals = NULL;
 
 extern ServerOptions options;

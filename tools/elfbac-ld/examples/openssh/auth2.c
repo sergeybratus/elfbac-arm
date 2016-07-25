@@ -87,7 +87,9 @@ Authmethod *authmethods[] = {
 
 /* protocol */
 
+__attribute__((section(".text.packet")))
 static int input_service_request(int, u_int32_t, void *);
+__attribute__((section(".text.packet")))
 static int input_userauth_request(int, u_int32_t, void *);
 
 /* helper */
@@ -174,6 +176,7 @@ do_authentication2(Authctxt *authctxt)
 }
 
 /*ARGSUSED*/
+__attribute__((section(".text.packet")))
 static int
 input_service_request(int type, u_int32_t seq, void *ctxt)
 {
@@ -209,6 +212,7 @@ input_service_request(int type, u_int32_t seq, void *ctxt)
 }
 
 /*ARGSUSED*/
+__attribute__((section(".text.packet")))
 static int
 input_userauth_request(int type, u_int32_t seq, void *ctxt)
 {
