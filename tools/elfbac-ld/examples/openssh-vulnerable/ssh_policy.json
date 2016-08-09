@@ -1,0 +1,622 @@
+{
+    "states": [
+        {
+            "name": "packet",
+            "stack": "stack",
+            "sections": [
+                { "name": "shared", "description": "*(.text.shared) *libc.a:(.text*) *libgcc.a:(.text*) *libopenbsd-compat.a:(EXCLUDE_FILE (*base64.o *bcrypt_pbkdf.o *blowfish.o) .text*) *libssh.a:atomicio.o(.text*) *libssh.a:bufaux.o(.text*) *libssh.a:buffer.o(.text*) *libssh.a:channels.o(.text*) *libssh.a:compat.o(.text*) *libssh.a:log.o(.text*) *libssh.a:match.o(.text*) *libssh.a:misc.o(.text*) *libssh.a:xmalloc.o(.text*) *libssh.a:memmgr.o(.text*) *readconf.o(.text*) *ttymodes.o(.text*)", "flags": "rx" },
+                { "description": "*(.text.packet) *libz.a:(.text*) *libssh.a:*packet.o(.text*) *libssh.a:authfd.o(.text*) *libssh.a:deattack.o(.text*) *libssh.a:canohost.o(.text*) *libssh.a:kex*.o(.text*) *libssh.a:dispatch.o(.text*) *libssh.a:readpass.o(.text*) *clientloop.o(.text*) *nchan.o(.text*) *sshconnect*.o(.text*) *libssh.a:*mac*.o(.text*) *sshtty.o(.text*) *roaming*.o(.text*)", "flags": "rx" },
+                { "name": "shared", "description": "*(.rodata*)", "flags": "r" },
+                { "name": ".ARM.exidx", "create": false, "flags": "r" },
+                { "name": ".eh_frame", "create": false, "flags": "r" },
+                { "name": "shared", "description": "*(.data.shared) *(.data.shared_heap) *libc.a:(.data*) *libgcc.a:(.data*) *libopenbsd-compat.a:(EXCLUDE_FILE (*base64.o *bcrypt_pbkdf.o *blowfish.o) .data*) *libssh.a:atomicio.o(.data*) *libssh.a:bufaux.o(.data*) *libssh.a:buffer.o(.data*) *libssh.a:channels.o(.data*) *libssh.a:compat.o(.data*) *libssh.a:log.o(.data*) *libssh.a:match.o(.data*) *libssh.a:misc.o(.data*) *libssh.a:xmalloc.o(.data*) *libssh.a:memmgr.o(.data) *readconf.o(.data*) *ttymodes.o(.data*)", "flags": "rw" },
+                { "description": "*(.data.packet) *libz.a:(.data*) *libssh.a:*packet.o(.data*) *libssh.a:authfd.o(.data*) *libssh.a:deattack.o(.data*) *libssh.a:canohost.o(.data*) *libssh.a:kex*.o(.data*) *libssh.a:dispatch.o(.data*) *libssh.a:readpass.o(.data*) *clientloop.o(.data*) *nchan.o(.data*) *sshconnect*.o(.data*) *libssh.a:*mac*.o(.data*) *sshtty.o(.data*) *roaming*.o(.data*)", "flags": "rw" },
+                { "name": "shared", "description": "*(.bss.shared) *libc.a:(.data* .bss* COMMON) *libgcc.a:(.bss* COMMON) *libopenbsd-compat.a:(EXCLUDE_FILE (*base64.o *bcrypt_pbkdf.o *blowfish.o) .bss* COMMON) *libssh.a:atomicio.o(.bss* COMMON) *libssh.a:bufaux.o(.bss* COMMON) *libssh.a:buffer.o(.bss* COMMON) *libssh.a:channels.o(.bss* COMMON) *libssh.a:compat.o(.bss* COMMON) *libssh.a:log.o(.bss* COMMON) *libssh.a:match.o(.bss* COMMON) *libssh.a:misc.o(.bss* COMMON) *libssh.a:xmalloc.o(.bss* COMMON) *libssh.a:memmgr.o(.bss COMMON) *readconf.o(.bss* COMMON) *ttymodes.o(.bss* COMMON)", "flags": "rw" },
+                { "description": "*(.bss.packet) *libz.a:(.bss* COMMON) *libssh.a:*packet.o(.bss* COMMON) *libssh.a:authfd.o(.bss* COMMON) *libssh.a:deattack.o(.bss* COMMON) *libssh.a:canohost.o(.bss* COMMON) *libssh.a:kex*.o(.bss* COMMON) *libssh.a:dispatch.o(.bss* COMMON) *libssh.a:readpass.o(.bss* COMMON) *clientloop.o(.bss* COMMON) *nchan.o(.bss* COMMON) *sshconnect*.o(.bss* COMMON) *libssh.a:*mac*.o(.bss* COMMON) *sshtty.o(.bss* COMMON) *roaming*.o(.bss* COMMON)", "flags": "rw" },
+                { "name": "packet_heap", "description": "*(.data.packet_heap)", "flags": "rw" },
+                { "name": "roaming_heap", "description": "*(.data.roaming_heap)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "crypto",
+            "stack": "stack",
+            "sections": [
+                { "name": "crypto_heap", "description": "*(.data.crypto_heap)", "flags": "rw" },
+                { "name": ".text.shared", "create": false, "flags": "rx" },
+                { "description": "*(.text.crypto) *libcrypto.a:(.text*) *libcrypt.a:(.text*) *libopenbsd-compat.a:(.text*) *libssh.a:cipher*.o(.text*) *libssh.a:authfile.o(.text*) *libssh.a:hostfile.o(.text*) *libssh.a:key.o(.text*) *libssh.a:ssh-dss.o(.text*) *libssh.a:ssh-ecdsa.o(.text*) *libssh.a:ssh-pkcs11*.o(.text*) *libssh.a:ssh-rsa.o(.text*) *libssh.a:uuencode.o(.text*) *libssh.a:entropy.o(.text*) *libssh.a:bufbn.o(.text*) *libssh.a:bufec.o(.text*)", "flags": "rx" },
+                { "name": ".rodata.shared", "create": false, "flags": "r" },
+                { "name": ".ARM.exidx", "create": false, "flags": "r" },
+                { "name": ".eh_frame", "create": false, "flags": "r" },
+                { "name": ".data.shared", "create": false, "flags": "rw" },
+                { "name": ".data.packet_heap", "create": false, "flags": "rw" },
+                { "description": "*(.data.crypto) *libcrypto.a:(.data*) *libcrypt.a:(.data*) *libopenbsd-compat.a:(.data*) *libssh.a:cipher*.o(.data*) *libssh.a:authfile.o(.data*) *libssh.a:hostfile.o(.data*) *libssh.a:key.o(.data*) *libssh.a:ssh-dss.o(.data*) *libssh.a:ssh-ecdsa.o(.data*) *libssh.a:ssh-pkcs11*.o(.data*) *libssh.a:ssh-rsa.o(.data*) *libssh.a:uuencode.o(.data*) *libssh.a:entropy.o(.data*) *libssh.a:bufbn.o(.data*) *libssh.a:bufec.o(.data*)", "flags": "rw" },
+                { "name": ".bss.shared", "create": false, "flags": "rw" },
+                { "description": "*libcrypto.a:(.bss* COMMON) *libcrypt.a:(.bss* COMMON) *libopenbsd-compat.a:(.bss* COMMON) *libssh.a:cipher*.o(.bss* COMMON) *libssh.a:authfile.o(.bss* COMMON) *libssh.a:hostfile.o(.bss* COMMON) *libssh.a:key.o(.bss* COMMON) *libssh.a:ssh-dss.o(.bss* COMMON) *libssh.a:ssh-ecdsa.o(.bss* COMMON) *libssh.a:ssh-pkcs11*.o(.bss* COMMON) *libssh.a:ssh-rsa.o(.bss* COMMON) *libssh.a:uuencode.o(.bss* COMMON) *libssh.a:entropy.o(.bss* COMMON) *libssh.a:bufbn.o(.bss* COMMON) *libssh.a:bufec.o(.bss* COMMON)", "flags": "rw" }
+            ]
+        },
+        {
+            "name": "start",
+            "stack": "stack",
+            "sections": [
+                { "name": ".headers", "create": false, "flags": "r", "base": 65536, "size": 276 },
+                { "name": ".init", "create": false, "flags": "rx" },
+                { "name": ".text.shared", "create": false, "flags": "rx" },
+                { "description": "*(.text*)", "flags": "rx" },
+                { "name": ".fini", "create": false, "flags": "rx" },
+                { "name": ".rodata.shared", "create": false, "flags": "r" },
+                { "name": ".ARM.exidx", "create": false, "flags": "r" },
+                { "name": ".eh_frame", "create": false, "flags": "r" },
+                { "name": ".init_array", "create": false, "flags": "rw" },
+                { "name": ".fini_array", "create": false, "flags": "rw" },
+                { "name": ".jcr", "create": false, "flags": "rw" },
+                { "name": ".data.shared", "create": false, "flags": "rw" },
+                { "description": "*(.data*)", "flags": "rw" },
+                { "name": ".bss.shared", "create": false, "flags": "rw" },
+                { "description": "*(.bss* COMMON)", "flags": "rw" }
+            ]
+        }
+    ],
+    "call_transitions": [
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "SSLeay_version",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "OPENSSL_add_all_algorithms_noconf",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "ERR_load_crypto_strings",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "SSLeay",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "RAND_status",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "ssh_connect",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_by_name",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_init",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_crypt",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "key_load_public",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "ssh_login",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "init_hostkeys",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "load_hostkeys",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "lookup_key_in_hostkeys_by_type",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "check_key_in_hostkeys",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "free_hostkeys",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_type_from_name",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_type_plain",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "crypto",
+            "address": "seed_rng",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "seed_rng",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "RAND_bytes",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "RC4_set_key",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "RC4",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_ivlen",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_keylen",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_blocksize",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_authlen",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "cipher_cleanup",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_md5",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_sha1",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_MD_size",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_sha256",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_KEY_new_by_curve_name",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_KEY_generate_key",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_KEY_get0_group",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_KEY_get0_public_key",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_POINT_new",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_GROUP_get_degree",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "ECDH_compute_key",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_POINT_clear_free",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EC_KEY_free",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "buffer_get_ecpoint",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "buffer_put_ecpoint",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_from_blob",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_to_blob",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_fingerprint",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_is_cert",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_ssh_name",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_equal",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_type",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_verify",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_free",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_ec_validate_public",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_load_private_type",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "key_sign",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "BN_new",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "BN_bin2bn",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "BN_clear_free",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "buffer_put_bignum2",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_DigestInit",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_DigestUpdate",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "EVP_DigestFinal",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "HMAC_CTX_init",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "HMAC_Init",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "HMAC_Update",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "packet",
+            "to": "crypto",
+            "address": "HMAC_Final",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_connection_is_on_socket",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_get_connection_in",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_get_connection_out",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "get_remote_ipaddr",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "get_remote_port",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_start",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_put_cstring",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_put_char",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_put_int",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_send",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "client_loop",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "packet_close",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "ssh_kill_proxy_command",
+            "param_size": 0,
+            "return_size": 0
+        },
+        {
+            "from": "start",
+            "to": "packet",
+            "address": "request_roaming",
+            "param_size": 0,
+            "return_size": 0
+        }
+    ]
+}
+
