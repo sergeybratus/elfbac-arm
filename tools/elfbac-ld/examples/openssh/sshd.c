@@ -270,8 +270,9 @@ Buffer loginmsg;
 struct passwd *privsep_pw = NULL;
 
 /* Prototypes for various functions defined later in this file. */
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 void destroy_sensitive_data(void);
+__attribute__((section(".text.crypto")))
 void demote_sensitive_data(void);
 
 #ifdef WITH_SSH1
@@ -400,7 +401,8 @@ grace_alarm_handler(int sig)
  * Thus there should be no concurrency control/asynchronous execution
  * problems.
  */
-static void
+__attribute__((section(".text.crypto")))
+void
 generate_ephemeral_server_key(void)
 {
 	verbose("Generating %s%d bit RSA key.",
@@ -578,7 +580,7 @@ sshd_exchange_identification(struct ssh *ssh, int sock_in, int sock_out)
 }
 
 /* Destroy the host and server keys.  They will no longer be needed. */
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 void
 destroy_sensitive_data(void)
 {
@@ -603,6 +605,7 @@ destroy_sensitive_data(void)
 }
 
 /* Demote private to public keys for network child */
+__attribute__((section(".text.crypto")))
 void
 demote_sensitive_data(void)
 {
@@ -808,7 +811,8 @@ privsep_postauth(Authctxt *authctxt)
 	packet_set_authenticated();
 }
 
-static char *
+__attribute__((section(".text.crypto")))
+char *
 list_hostkey_types(void)
 {
 	Buffer b;
@@ -871,8 +875,8 @@ list_hostkey_types(void)
 	return ret;
 }
 
-__attribute__((section(".text.packet")))
-static Key *
+__attribute__((section(".text.crypto")))
+Key *
 get_hostkey_by_type(int type, int nid, int need_private, struct ssh *ssh)
 {
 	int i;
@@ -900,21 +904,21 @@ get_hostkey_by_type(int type, int nid, int need_private, struct ssh *ssh)
 	return NULL;
 }
 
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 Key *
 get_hostkey_public_by_type(int type, int nid, struct ssh *ssh)
 {
 	return get_hostkey_by_type(type, nid, 0, ssh);
 }
 
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 Key *
 get_hostkey_private_by_type(int type, int nid, struct ssh *ssh)
 {
 	return get_hostkey_by_type(type, nid, 1, ssh);
 }
 
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 Key *
 get_hostkey_by_index(int ind)
 {
@@ -923,7 +927,7 @@ get_hostkey_by_index(int ind)
 	return (sensitive_data.host_keys[ind]);
 }
 
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 Key *
 get_hostkey_public_by_index(int ind, struct ssh *ssh)
 {
@@ -932,7 +936,7 @@ get_hostkey_public_by_index(int ind, struct ssh *ssh)
 	return (sensitive_data.host_pubkeys[ind]);
 }
 
-__attribute__((section(".text.packet")))
+__attribute__((section(".text.crypto")))
 int
 get_hostkey_index(Key *key, int compare, struct ssh *ssh)
 {
@@ -1051,7 +1055,10 @@ usage(void)
 	exit(1);
 }
 
-static void
+#ifdef WITH_SSH1
+__attribute__((section(".text.crypto")))
+#endif
+void
 send_rexec_state(int fd, struct sshbuf *conf)
 {
 	struct sshbuf *m;
@@ -1111,7 +1118,10 @@ send_rexec_state(int fd, struct sshbuf *conf)
 	debug3("%s: done", __func__);
 }
 
-static void
+#ifdef WITH_SSH1
+__attribute__((section(".text.crypto")))
+#endif
+void
 recv_rexec_state(int fd, Buffer *conf)
 {
 	Buffer m;
@@ -1536,6 +1546,171 @@ check_ip_options(struct ssh *ssh)
 #endif /* IP_OPTIONS */
 }
 
+/* load host keys */
+__attribute__((section(".text.crypto")))
+void
+load_host_keys(void)
+{
+    int r, i, keytype;
+	Key *key;
+	Key *pubkey;
+    char *fp;
+
+	sensitive_data.host_keys = xcalloc(options.num_host_key_files,
+	    sizeof(Key *));
+	sensitive_data.host_pubkeys = xcalloc(options.num_host_key_files,
+	    sizeof(Key *));
+
+	if (options.host_key_agent) {
+		if (strcmp(options.host_key_agent, SSH_AUTHSOCKET_ENV_NAME))
+			setenv(SSH_AUTHSOCKET_ENV_NAME,
+			    options.host_key_agent, 1);
+		if ((r = ssh_get_authentication_socket(NULL)) == 0)
+			have_agent = 1;
+		else
+			error("Could not connect to agent \"%s\": %s",
+			    options.host_key_agent, ssh_err(r));
+	}
+
+	for (i = 0; i < options.num_host_key_files; i++) {
+		if (options.host_key_files[i] == NULL)
+			continue;
+		key = key_load_private(options.host_key_files[i], "", NULL);
+		pubkey = key_load_public(options.host_key_files[i], NULL);
+		if (pubkey == NULL && key != NULL)
+			pubkey = key_demote(key);
+		sensitive_data.host_keys[i] = key;
+		sensitive_data.host_pubkeys[i] = pubkey;
+
+		if (key == NULL && pubkey != NULL && pubkey->type != KEY_RSA1 &&
+		    have_agent) {
+			debug("will rely on agent for hostkey %s",
+			    options.host_key_files[i]);
+			keytype = pubkey->type;
+		} else if (key != NULL) {
+			keytype = key->type;
+		} else {
+			error("Could not load host key: %s",
+			    options.host_key_files[i]);
+			sensitive_data.host_keys[i] = NULL;
+			sensitive_data.host_pubkeys[i] = NULL;
+			continue;
+		}
+
+		switch (keytype) {
+		case KEY_RSA1:
+			sensitive_data.ssh1_host_key = key;
+			sensitive_data.have_ssh1_key = 1;
+			break;
+		case KEY_RSA:
+		case KEY_DSA:
+		case KEY_ECDSA:
+		case KEY_ED25519:
+			if (have_agent || key != NULL)
+				sensitive_data.have_ssh2_key = 1;
+			break;
+		}
+		if ((fp = sshkey_fingerprint(pubkey, options.fingerprint_hash,
+		    SSH_FP_DEFAULT)) == NULL)
+			fatal("sshkey_fingerprint failed");
+		debug("%s host key #%d: %s %s",
+		    key ? "private" : "agent", i, keytype == KEY_RSA1 ?
+		    sshkey_type(pubkey) : sshkey_ssh_name(pubkey), fp);
+		free(fp);
+	}
+
+	if ((options.protocol & SSH_PROTO_1) && !sensitive_data.have_ssh1_key) {
+		logit("Disabling protocol version 1. Could not load host key");
+		options.protocol &= ~SSH_PROTO_1;
+	}
+	if ((options.protocol & SSH_PROTO_2) && !sensitive_data.have_ssh2_key) {
+		logit("Disabling protocol version 2. Could not load host key");
+		options.protocol &= ~SSH_PROTO_2;
+	}
+	if (!(options.protocol & (SSH_PROTO_1|SSH_PROTO_2))) {
+		logit("sshd: no hostkeys available -- exiting.");
+		exit(1);
+	}
+}
+    
+/*
+ * Load certificates. They are stored in an array at identical
+ * indices to the public keys that they relate to.
+ */
+__attribute__((section(".text.crypto")))
+void
+load_host_certificates(void)
+{
+    int i, j;
+	Key *key;
+
+	sensitive_data.host_certificates = xcalloc(options.num_host_key_files,
+	    sizeof(Key *));
+	for (i = 0; i < options.num_host_key_files; i++)
+		sensitive_data.host_certificates[i] = NULL;
+
+	for (i = 0; i < options.num_host_cert_files; i++) {
+		if (options.host_cert_files[i] == NULL)
+			continue;
+		key = key_load_public(options.host_cert_files[i], NULL);
+		if (key == NULL) {
+			error("Could not load host certificate: %s",
+			    options.host_cert_files[i]);
+			continue;
+		}
+		if (!key_is_cert(key)) {
+			error("Certificate file is not a certificate: %s",
+			    options.host_cert_files[i]);
+			key_free(key);
+			continue;
+		}
+		/* Find matching private key */
+		for (j = 0; j < options.num_host_key_files; j++) {
+			if (key_equal_public(key,
+			    sensitive_data.host_keys[j])) {
+				sensitive_data.host_certificates[j] = key;
+				break;
+			}
+		}
+		if (j >= options.num_host_key_files) {
+			error("No matching private key for certificate: %s",
+			    options.host_cert_files[i]);
+			key_free(key);
+			continue;
+		}
+		sensitive_data.host_certificates[j] = key;
+		debug("host certificate: #%d type %d %s", j, key->type,
+		    key_type(key));
+	}
+
+#ifdef WITH_SSH1
+	/* Check certain values for sanity. */
+	if (options.protocol & SSH_PROTO_1) {
+		if (options.server_key_bits < SSH_RSA_MINIMUM_MODULUS_SIZE ||
+		    options.server_key_bits > OPENSSL_RSA_MAX_MODULUS_BITS) {
+			fprintf(stderr, "Bad server key size.\n");
+			exit(1);
+		}
+		/*
+		 * Check that server and host key lengths differ sufficiently. This
+		 * is necessary to make double encryption work with rsaref. Oh, I
+		 * hate software patents. I dont know if this can go? Niels
+		 */
+		if (options.server_key_bits >
+		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) -
+		    SSH_KEY_BITS_RESERVED && options.server_key_bits <
+		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
+		    SSH_KEY_BITS_RESERVED) {
+			options.server_key_bits =
+			    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
+			    SSH_KEY_BITS_RESERVED;
+			debug("Forcing server key to %d bits to make it differ from host key.",
+			    options.server_key_bits);
+		}
+	}
+#endif
+}
+
 /*
  * Main program for the daemon.
  */
@@ -1545,18 +1720,15 @@ main(int ac, char **av)
 	struct ssh *ssh = NULL;
 	extern char *optarg;
 	extern int optind;
-	int r, opt, i, j, on = 1;
+	int r, opt, i, on = 1;
 	int sock_in = -1, sock_out = -1, newsock = -1;
 	const char *remote_ip;
 	int remote_port;
-	char *fp, *line, *laddr, *logfile = NULL;
+	char *line, *laddr, *logfile = NULL;
 	int config_s[2] = { -1 , -1 };
 	u_int n;
 	u_int64_t ibytes, obytes;
 	mode_t new_umask;
-	Key *key;
-	Key *pubkey;
-	int keytype;
 	Authctxt *authctxt;
 	struct connection_info *connection_info = get_connection_info(0, 0);
 
@@ -1751,10 +1923,13 @@ main(int ac, char **av)
 	drop_cray_privs();
 #endif
 
+    // This seems unecessary, already 0-initialized
+#if 0
 	sensitive_data.server_key = NULL;
 	sensitive_data.ssh1_host_key = NULL;
 	sensitive_data.have_ssh1_key = 0;
 	sensitive_data.have_ssh2_key = 0;
+#endif
 
 	/*
 	 * If we're doing an extended config test, make sure we have all of
@@ -1850,151 +2025,9 @@ main(int ac, char **av)
 	}
 	endpwent();
 
-	/* load host keys */
-	sensitive_data.host_keys = xcalloc(options.num_host_key_files,
-	    sizeof(Key *));
-	sensitive_data.host_pubkeys = xcalloc(options.num_host_key_files,
-	    sizeof(Key *));
+    load_host_keys();
 
-	if (options.host_key_agent) {
-		if (strcmp(options.host_key_agent, SSH_AUTHSOCKET_ENV_NAME))
-			setenv(SSH_AUTHSOCKET_ENV_NAME,
-			    options.host_key_agent, 1);
-		if ((r = ssh_get_authentication_socket(NULL)) == 0)
-			have_agent = 1;
-		else
-			error("Could not connect to agent \"%s\": %s",
-			    options.host_key_agent, ssh_err(r));
-	}
-
-	for (i = 0; i < options.num_host_key_files; i++) {
-		if (options.host_key_files[i] == NULL)
-			continue;
-		key = key_load_private(options.host_key_files[i], "", NULL);
-		pubkey = key_load_public(options.host_key_files[i], NULL);
-		if (pubkey == NULL && key != NULL)
-			pubkey = key_demote(key);
-		sensitive_data.host_keys[i] = key;
-		sensitive_data.host_pubkeys[i] = pubkey;
-
-		if (key == NULL && pubkey != NULL && pubkey->type != KEY_RSA1 &&
-		    have_agent) {
-			debug("will rely on agent for hostkey %s",
-			    options.host_key_files[i]);
-			keytype = pubkey->type;
-		} else if (key != NULL) {
-			keytype = key->type;
-		} else {
-			error("Could not load host key: %s",
-			    options.host_key_files[i]);
-			sensitive_data.host_keys[i] = NULL;
-			sensitive_data.host_pubkeys[i] = NULL;
-			continue;
-		}
-
-		switch (keytype) {
-		case KEY_RSA1:
-			sensitive_data.ssh1_host_key = key;
-			sensitive_data.have_ssh1_key = 1;
-			break;
-		case KEY_RSA:
-		case KEY_DSA:
-		case KEY_ECDSA:
-		case KEY_ED25519:
-			if (have_agent || key != NULL)
-				sensitive_data.have_ssh2_key = 1;
-			break;
-		}
-		if ((fp = sshkey_fingerprint(pubkey, options.fingerprint_hash,
-		    SSH_FP_DEFAULT)) == NULL)
-			fatal("sshkey_fingerprint failed");
-		debug("%s host key #%d: %s %s",
-		    key ? "private" : "agent", i, keytype == KEY_RSA1 ?
-		    sshkey_type(pubkey) : sshkey_ssh_name(pubkey), fp);
-		free(fp);
-	}
-	if ((options.protocol & SSH_PROTO_1) && !sensitive_data.have_ssh1_key) {
-		logit("Disabling protocol version 1. Could not load host key");
-		options.protocol &= ~SSH_PROTO_1;
-	}
-	if ((options.protocol & SSH_PROTO_2) && !sensitive_data.have_ssh2_key) {
-		logit("Disabling protocol version 2. Could not load host key");
-		options.protocol &= ~SSH_PROTO_2;
-	}
-	if (!(options.protocol & (SSH_PROTO_1|SSH_PROTO_2))) {
-		logit("sshd: no hostkeys available -- exiting.");
-		exit(1);
-	}
-
-	/*
-	 * Load certificates. They are stored in an array at identical
-	 * indices to the public keys that they relate to.
-	 */
-	sensitive_data.host_certificates = xcalloc(options.num_host_key_files,
-	    sizeof(Key *));
-	for (i = 0; i < options.num_host_key_files; i++)
-		sensitive_data.host_certificates[i] = NULL;
-
-	for (i = 0; i < options.num_host_cert_files; i++) {
-		if (options.host_cert_files[i] == NULL)
-			continue;
-		key = key_load_public(options.host_cert_files[i], NULL);
-		if (key == NULL) {
-			error("Could not load host certificate: %s",
-			    options.host_cert_files[i]);
-			continue;
-		}
-		if (!key_is_cert(key)) {
-			error("Certificate file is not a certificate: %s",
-			    options.host_cert_files[i]);
-			key_free(key);
-			continue;
-		}
-		/* Find matching private key */
-		for (j = 0; j < options.num_host_key_files; j++) {
-			if (key_equal_public(key,
-			    sensitive_data.host_keys[j])) {
-				sensitive_data.host_certificates[j] = key;
-				break;
-			}
-		}
-		if (j >= options.num_host_key_files) {
-			error("No matching private key for certificate: %s",
-			    options.host_cert_files[i]);
-			key_free(key);
-			continue;
-		}
-		sensitive_data.host_certificates[j] = key;
-		debug("host certificate: #%d type %d %s", j, key->type,
-		    key_type(key));
-	}
-
-#ifdef WITH_SSH1
-	/* Check certain values for sanity. */
-	if (options.protocol & SSH_PROTO_1) {
-		if (options.server_key_bits < SSH_RSA_MINIMUM_MODULUS_SIZE ||
-		    options.server_key_bits > OPENSSL_RSA_MAX_MODULUS_BITS) {
-			fprintf(stderr, "Bad server key size.\n");
-			exit(1);
-		}
-		/*
-		 * Check that server and host key lengths differ sufficiently. This
-		 * is necessary to make double encryption work with rsaref. Oh, I
-		 * hate software patents. I dont know if this can go? Niels
-		 */
-		if (options.server_key_bits >
-		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) -
-		    SSH_KEY_BITS_RESERVED && options.server_key_bits <
-		    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
-		    SSH_KEY_BITS_RESERVED) {
-			options.server_key_bits =
-			    BN_num_bits(sensitive_data.ssh1_host_key->rsa->n) +
-			    SSH_KEY_BITS_RESERVED;
-			debug("Forcing server key to %d bits to make it differ from host key.",
-			    options.server_key_bits);
-		}
-	}
-#endif
+    load_host_certificates();
 
 	if (use_privsep) {
 		struct stat st;
@@ -2246,9 +2279,12 @@ main(int ac, char **av)
 
 	sshd_exchange_identification(ssh, sock_in, sock_out);
 
+    // Not relevant for test
+#if 0
 	/* In inetd mode, generate ephemeral key only for proto 1 connections */
 	if (!compat20 && inetd_flag && sensitive_data.server_key == NULL)
 		generate_ephemeral_server_key();
+#endif
 
 	packet_set_nonblocking();
 
@@ -2377,6 +2413,7 @@ main(int ac, char **av)
  * Decrypt session_key_int using our private server key and private host key
  * (key with larger modulus first).
  */
+__attribute__((section(".text.crypto")))
 int
 ssh1_session_key(BIGNUM *session_key_int)
 {
@@ -2427,7 +2464,8 @@ ssh1_session_key(BIGNUM *session_key_int)
 /*
  * SSH1 key exchange
  */
-static void
+__attribute__((section(".text.crypto")))
+void
 do_ssh1_kex(void)
 {
 	struct ssh *ssh = active_state; /* XXX */

@@ -6,6 +6,7 @@
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/mm_types.h>
+#include <linux/mmu_notifier.h>
 #include <linux/resource.h>
 #include <linux/rmap.h>
 #include <linux/slab.h>
@@ -25,7 +26,6 @@ static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
 		unsigned long addr, unsigned long flags)
 {
 	pte_t pte = *src_pte;
-	struct page *page;
 
 	/* pte contains position in file, so copy. */
 	if (unlikely(!pte_present(pte))) {
@@ -34,19 +34,9 @@ static inline unsigned long elfbac_copy_one_pte(struct mm_struct *mm,
 		if (likely(!non_swap_entry(entry))) {
 			if (swap_duplicate(entry) < 0)
 				return entry.val;
-		} else if (is_migration_entry(entry)) {
-			page = migration_entry_to_page(entry);
 		}
-		goto out_set_pte;
 	}
 
-	page = vm_normal_page(vma, addr, pte);
-	if (page) {
-		get_page(page);
-		page_dup_rmap(page);
-	}
-
-out_set_pte:
 	if (!(flags & VM_WRITE))
 		pte = pte_wrprotect(pte);
 
@@ -217,10 +207,6 @@ int elfbac_copy_mapping(struct mm_struct *mm, pgd_t *dst_pgd, pgd_t *src_pgd,
 	return elfbac_copy_page_range(mm, dst_pgd, src_pgd, vma, start, end, flags);
 }
 
-/*
- * Note: this doesn't free the actual pages themselves. That
- * has been handled earlier when unmapping all the memory regions.
- */
 static void elfbac_free_pte_range(struct mmu_gather *tlb, pmd_t *pmd,
 			   unsigned long addr)
 {
@@ -331,7 +317,6 @@ static void elfbac_free_pgd_range(struct mmu_gather *tlb, pgd_t *pgd,
 	 * now has no other vmas using it, so can be freed, we don't
 	 * bother to round floor or end up - the tests don't need that.
 	 */
-
 	addr &= PMD_MASK;
 	if (addr < floor) {
 		addr += PMD_SIZE;
@@ -378,6 +363,43 @@ static void elfbac_free_pgtables(struct mmu_gather *tlb, pgd_t *pgd,
 		vma = next;
 	}
 }
+
+static void elfbac_invalidate_clones(struct mmu_notifier *mn, struct mm_struct *mm,
+				     unsigned long start, unsigned long end)
+{
+	int i;
+	struct mmu_gather tlb;
+	struct elfbac_state *state;
+
+	if (!mm->elfbac_policy)
+		return;
+
+	list_for_each_entry(state, &mm->elfbac_policy->states_list, list) {
+		tlb_gather_mmu(&tlb, mm, 0, -1);
+		elfbac_free_pgd_range(&tlb, state->pgd, start, end,
+				     FIRST_USER_ADDRESS, USER_PGTABLES_CEILING);
+		tlb_finish_mmu(&tlb, 0, -1);
+	}
+
+	for (i = 0; i < mm->elfbac_policy->num_stacks; i++) {
+		tlb_gather_mmu(&tlb, mm, 0, -1);
+		elfbac_free_pgd_range(&tlb, mm->elfbac_policy->stacks[i], start, end,
+				     FIRST_USER_ADDRESS, USER_PGTABLES_CEILING);
+		tlb_finish_mmu(&tlb, 0, -1);
+	}
+}
+
+static void elfbac_release(struct mmu_notifier *mn, struct mm_struct *mm)
+{
+	elfbac_policy_destroy(mm, mm->elfbac_policy);
+	kfree(mm->elfbac_policy);
+	mm->elfbac_policy = NULL;
+}
+
+static const struct mmu_notifier_ops elfbac_mmu_notifier_ops = {
+	.invalidate_range_end = elfbac_invalidate_clones,
+	.release = elfbac_release
+};
 
 static int parse_ulong(unsigned char **buf, size_t *size, unsigned long *out)
 {
@@ -496,7 +518,7 @@ static int elfbac_validate_policy(struct elfbac_policy *policy)
 	return 0;
 }
 
-int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
+int elfbac_policy_parse(struct mm_struct *mm, unsigned char *buf, size_t size,
 			struct elfbac_policy *out)
 {
 	enum {
@@ -557,9 +579,6 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 			}
 
 			state->id = cur_state_id++;
-			state->return_addr = 0;
-			state->return_size = 0;
-			state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
 
 			memset(&state->context, 0, sizeof(mm_context_t));
 			INIT_LIST_HEAD(&state->sections_list);
@@ -641,9 +660,11 @@ int elfbac_parse_policy(struct mm_struct *mm, unsigned char *buf, size_t size,
 	for (i = 1; i < out->num_stacks; i++)
 		out->stacks[i] = pgd_alloc(mm);
 
-	current->elfbac_state = list_entry(out->states_list.next, struct elfbac_state, list);
+	out->mmu_notifier.ops = &elfbac_mmu_notifier_ops;
+	retval = mmu_notifier_register(&out->mmu_notifier, mm);
+
 	spin_unlock_irqrestore(&out->lock, flags);
-	return 0;
+	return retval;
 
 err:
 	spin_unlock_irqrestore(&out->lock, flags);
@@ -682,17 +703,18 @@ void elfbac_policy_destroy(struct mm_struct *mm, struct elfbac_policy *policy)
 		orig_pgd = mm->pgd;
 		for (i = 1; i < policy->num_stacks; i++) {
 			mm->pgd = policy->stacks[i];
+
 			tlb_gather_mmu(&tlb, mm, 0, -1);
-			unmap_vmas(&tlb, mm->mmap, 0, -1);
 			elfbac_free_pgtables(&tlb, mm->pgd, mm->mmap,
 					     FIRST_USER_ADDRESS, USER_PGTABLES_CEILING);
 			tlb_finish_mmu(&tlb, 0, -1);
+
 			pgd_free(mm, policy->stacks[i]);
 		}
+
 		mm->pgd = orig_pgd;
 		kfree(policy->stacks);
 	}
-
 
 	list_for_each_entry_safe(data_transition, ndata_transition, &policy->data_transitions_list, list)
 		kfree(data_transition);
@@ -831,7 +853,54 @@ err:
 	return retval;
 }
 
-struct elfbac_state *elfbac_state_by_id(struct elfbac_policy *policy, unsigned long id)
+int elfbac_task_init(struct elfbac_policy *policy, struct elfbac_task *task)
+{
+	int retval;
+	struct elfbac_return_info *return_info;
+	struct list_head *pos;
+
+	retval = -EINVAL;
+	if (!policy || list_empty(&policy->states_list))
+		goto err;
+
+	task->policy = policy;
+
+	retval = -ENOMEM;
+	INIT_LIST_HEAD(&task->return_info_list);
+	list_for_each(pos, &policy->states_list) {
+		return_info = kmalloc(sizeof(struct elfbac_return_info), GFP_KERNEL);
+		if (!return_info)
+			goto err;
+
+		return_info->return_addr = 0;
+		return_info->return_size = 0;
+		return_info->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
+
+		list_add_tail(&return_info->list, &task->return_info_list);
+	}
+
+	task->state = list_entry(policy->states_list.next, struct elfbac_state, list);
+	task->return_info = list_entry(task->return_info_list.next, struct
+				       elfbac_return_info, list);
+
+	return 0;
+
+err:
+	elfbac_task_destroy(task);
+	return retval;
+}
+
+void elfbac_task_destroy(struct elfbac_task *task)
+{
+	struct elfbac_return_info *cur, *n;
+
+	list_for_each_entry_safe(cur, n, &task->return_info_list, list)
+		kfree(cur);
+
+	memset(task, 0, sizeof(struct elfbac_task));
+}
+
+static struct elfbac_state *elfbac_state_by_id(struct elfbac_policy *policy, unsigned long id)
 {
 	struct elfbac_state *state;
 
@@ -842,38 +911,84 @@ struct elfbac_state *elfbac_state_by_id(struct elfbac_policy *policy, unsigned l
 	return NULL;
 }
 
+struct elfbac_return_info *elfbac_return_info_by_id(struct elfbac_task *task, unsigned long id)
+{
+	struct elfbac_return_info *return_info;
+
+	list_for_each_entry(return_info, &task->return_info_list, list)
+		if (id-- == 0)
+			return return_info;
+
+	return NULL;
+}
+
+int elfbac_task_clone(struct elfbac_policy *new_policy, struct elfbac_task *orig,
+		      struct elfbac_task *new)
+{
+	int retval;
+	struct elfbac_return_info *orig_return_info, *new_return_info;
+
+	new->policy = new_policy;
+
+	retval = -ENOMEM;
+	list_for_each_entry(orig_return_info, &orig->return_info_list, list) {
+		new_return_info = kmalloc(sizeof(struct elfbac_return_info), GFP_KERNEL);
+		if (!new_return_info)
+			goto err;
+
+		new_return_info->return_addr = orig_return_info->return_addr;
+		new_return_info->return_size = orig_return_info->return_size;
+		new_return_info->return_state_id = orig_return_info->return_state_id;
+
+		list_add_tail(&new_return_info->list, &new->return_info_list);
+	}
+
+	new->state = elfbac_state_by_id(new_policy, orig->state->id);
+	new->return_info = elfbac_return_info_by_id(new, orig->state->id);
+
+	return 0;
+
+err:
+	elfbac_task_destroy(new);
+	return retval;
+}
+
 bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 		      unsigned int mask, unsigned long lr,
 		      struct elfbac_state **next_state, unsigned long *flags,
 		      unsigned long *copy_size)
 {
 	unsigned long start, end;
-	struct elfbac_state *state;
+	struct elfbac_state *current_state, *state;
 	struct elfbac_section *section;
 	struct elfbac_data_transition *data_transition;
 	struct elfbac_call_transition *call_transition;
+	struct elfbac_return_info *current_return_info, *next_return_info;
 
 	*next_state = NULL;
 	*flags = 0;
 	*copy_size = 0;
+	current_state = current->elfbac_task->state;
+	next_return_info = current_return_info = current->elfbac_task->return_info;
 
 	// Check for return from a call transition
-	// TODO: Need 1 return_state_id per state per task for shared policies
-	if ((mask & VM_EXEC) && addr == (current->elfbac_state->return_addr & ~1) &&
-	    current->elfbac_state->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
-		state = elfbac_state_by_id(policy, current->elfbac_state->return_state_id);
+	if ((mask & VM_EXEC) && addr == (current_return_info->return_addr & ~1) &&
+	    current_return_info->return_state_id != ELFBAC_UNDEFINED_STATE_ID) {
+		state = elfbac_state_by_id(policy, current_return_info->return_state_id);
+		next_return_info = elfbac_return_info_by_id(current->elfbac_task, state->id);
+
 		if (state) {
-			*copy_size = current->elfbac_state->return_size;
+			*copy_size = current_return_info->return_size;
 			*next_state = state;
-			current->elfbac_state->return_addr = 0;
-			current->elfbac_state->return_size = 0;
-			current->elfbac_state->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
+			current_return_info->return_addr = 0;
+			current_return_info->return_size = 0;
+			current_return_info->return_state_id = ELFBAC_UNDEFINED_STATE_ID;
 			goto good_transition;
 		}
 	}
 
 	// Common case, addr is allowed in current state
-	list_for_each_entry(section, &current->elfbac_state->sections_list, list) {
+	list_for_each_entry(section, &current_state->sections_list, list) {
 		start = section->base;
 		end = start + section->size;
 
@@ -886,8 +1001,9 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 	// Check for normal state transitions (call and data)
 	if (mask & VM_EXEC) {
 		list_for_each_entry(call_transition, &policy->call_transitions_list, list) {
-			if (call_transition->from == current->elfbac_state->id) {
+			if (call_transition->from == current_state->id) {
 				state = elfbac_state_by_id(policy, call_transition->to);
+				next_return_info = elfbac_return_info_by_id(current->elfbac_task, state->id);
 
 				if (!state)
 					continue;
@@ -895,19 +1011,22 @@ bool elfbac_access_ok(struct elfbac_policy *policy, unsigned long addr,
 				// Don't allow calling back into a previous
 				// state, need to maintain internal per-state
 				// stack if this is wanted
-				if ((call_transition->addr & ~1) == addr && state->return_addr == 0) {
+				if ((call_transition->addr & ~1) == addr && 
+				    next_return_info->return_addr == 0) {
 					*next_state = state;
 					*copy_size = call_transition->param_size;
-					state->return_addr = lr & ~1;
-					state->return_size = call_transition->return_size;
-					state->return_state_id = current->elfbac_state->id;
+
+					next_return_info->return_addr = lr & ~1;
+					next_return_info->return_size = call_transition->return_size;
+					next_return_info->return_state_id = current_state->id;
+
 					goto good_transition;
 				}
 			}
 		}
 	} else {
 		list_for_each_entry(data_transition, &policy->data_transitions_list, list) {
-			if (data_transition->from == current->elfbac_state->id) {
+			if (data_transition->from == current_state->id) {
 				start = data_transition->base;
 				end = start + data_transition->size;
 
@@ -933,6 +1052,8 @@ good_transition:
 
 		if ((section->flags & mask) && addr >= start && addr <= end) {
 			*flags = section->flags;
+			current->elfbac_task->state = *next_state;
+			current->elfbac_task->return_info = next_return_info;
 			return true;
 		}
 	}

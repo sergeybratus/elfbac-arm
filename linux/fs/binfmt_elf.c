@@ -1091,6 +1091,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			unsigned char *elfbac_policy_buffer;
 			struct elfbac_policy *elfbac_policy;
 			size_t elfbac_policy_size = elf_ppnt->p_filesz;
+			struct elfbac_task *elfbac_task;
 
 			retval = -ENOEXEC;
 			if (elfbac_policy_size > ELFBAC_POLICY_SIZE_MAX)
@@ -1122,7 +1123,7 @@ static int load_elf_binary(struct linux_binprm *bprm)
 				goto out;
 			}
 
-			retval = elfbac_parse_policy(current->mm,
+			retval = elfbac_policy_parse(current->mm,
 					elfbac_policy_buffer,
 					elfbac_policy_size,
 					elfbac_policy);
@@ -1131,7 +1132,25 @@ static int load_elf_binary(struct linux_binprm *bprm)
 			if (retval < 0)
 				goto out;
 
+			elfbac_task = kmalloc(sizeof(struct elfbac_task),
+						       GFP_KERNEL);
+
+			if (!elfbac_task) {
+				elfbac_policy_destroy(current->mm, elfbac_policy);
+				kfree(elfbac_policy);
+				goto out;
+			}
+
+			retval = elfbac_task_init(elfbac_policy, elfbac_task);
+			if (retval < 0) {
+				kfree(elfbac_task);
+				elfbac_policy_destroy(current->mm, elfbac_policy);
+				kfree(elfbac_policy);
+				goto out;
+			}
+
 			current->mm->elfbac_policy = elfbac_policy;
+			current->elfbac_task = elfbac_task;
 
 			// Ensure we've switched to state 0's page tables, the
 			// NULL prev is a hack but doesn't affect ARM adversely

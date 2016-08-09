@@ -698,10 +698,6 @@ void mmput(struct mm_struct *mm)
 		exit_aio(mm);
 		ksm_exit(mm);
 		khugepaged_exit(mm); /* must run before exit_mmap */
-#ifdef CONFIG_ELFBAC
-		if (mm->elfbac_policy)
-			elfbac_policy_destroy(mm, mm->elfbac_policy);
-#endif
 		exit_mmap(mm);
 		set_mm_exe_file(mm, NULL);
 		if (!list_empty(&mm->mmlist)) {
@@ -899,6 +895,13 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 		tsk->clear_child_tid = NULL;
 	}
 
+#ifdef CONFIG_ELFBAC
+	if (current->elfbac_task) {
+		elfbac_task_destroy(current->elfbac_task);
+		kfree(current->elfbac_task);
+	}
+#endif
+
 	/*
 	 * All done, finally we can wake up parent and return this mm to him.
 	 * Also kthread_stop() uses this completion for synchronization.
@@ -1017,22 +1020,27 @@ static int copy_elfbac_policy(struct task_struct *tsk)
 	return 0;
 }
 
-static int copy_elfbac_state(struct task_struct *tsk)
+static int copy_elfbac_task(struct task_struct *tsk)
 {
-	unsigned long id;
+	int ret;
 
-	if (!current->elfbac_state || !tsk->mm->elfbac_policy) {
-		tsk->elfbac_state = NULL;
+	if (!current || !current->mm || !current->mm->elfbac_policy) {
+		tsk->elfbac_task = NULL;
 		return 0;
 	}
 
-	id = current->elfbac_state->id;
-	tsk->elfbac_state = elfbac_state_by_id(tsk->mm->elfbac_policy, id);
+
+	tsk->elfbac_task = kmalloc(sizeof(struct elfbac_task), GFP_KERNEL);
+	if (!tsk->elfbac_task)
+		return -ENOMEM;
+
+	ret = elfbac_task_clone(tsk->mm->elfbac_policy, current->elfbac_task,
+				tsk->elfbac_task);
 
 	//FIXME: Register corruption
 	mdelay(100);
 
-	return 0;
+	return ret;
 }
 #endif
 
@@ -1508,7 +1516,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	retval = copy_elfbac_policy(p);
 	if (retval)
 		goto bad_fork_cleanup_io;
-	retval = copy_elfbac_state(p);
+	retval = copy_elfbac_task(p);
 	if (retval)
 		goto bad_fork_cleanup_io;
 #endif

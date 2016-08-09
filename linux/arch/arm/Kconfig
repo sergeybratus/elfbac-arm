@@ -2080,6 +2080,7 @@ source "fs/Kconfig.binfmt"
 
 config ELFBAC
 	bool "ELFbac policy support"
+	select MMU_NOTIFIER
 	depends on CPU_V7
 
 endmenu

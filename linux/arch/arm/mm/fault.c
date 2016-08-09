@@ -68,8 +68,8 @@ void show_pte(struct mm_struct *mm, unsigned long addr)
 
 #ifdef CONFIG_ELFBAC
 	if (mm->elfbac_policy) {
-		pr_alert("pgd = %p\n", current->elfbac_state->pgd);
-		pgd = current->elfbac_state->pgd + pgd_index(addr);
+		pr_alert("pgd = %p\n", current->elfbac_task->state->pgd);
+		pgd = current->elfbac_task->state->pgd + pgd_index(addr);
 	} else {
 		pr_alert("pgd = %p\n", mm->pgd);
 		pgd = pgd_offset(mm, addr);
@@ -215,6 +215,10 @@ void do_bad_area(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 #define VM_FAULT_BADMAP		0x010000
 #define VM_FAULT_BADACCESS	0x020000
 
+#ifdef CONFIG_ELFBAC
+#define VM_FAULT_ELFBAC		0x040000
+#endif
+
 /*
  * Check that the permissions on the VMA allow for the fault which occurred.
  * If we encountered a write fault, we must have write permission, otherwise
@@ -274,7 +278,7 @@ good_area:
 		if (fsr & FSR_LNX_PF)
 			access = VM_EXEC;
 
-		fault = VM_FAULT_BADACCESS;
+		fault = VM_FAULT_BADACCESS | VM_FAULT_ELFBAC;
 
 		spin_lock_irqsave(&mm->elfbac_policy->lock, sflags);
 
@@ -295,7 +299,7 @@ good_area:
 				access_flags = vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC);
 			} else {
 				printk("GOT ELFBAC VIOLATION: state: %ld, addr: %08lx, pc: %lx, access: %x\n",
-				       current->elfbac_state->id, addr, regs->ARM_pc, access);
+				       current->elfbac_task->state->id, addr, regs->ARM_pc, access);
 
 				spin_unlock_irqrestore(&mm->elfbac_policy->lock, sflags);
 				goto out;
@@ -319,15 +323,15 @@ good_area:
 				}
 			}
 
-			current->elfbac_state = next_state;
+			current->elfbac_task->state = next_state;
 
-			asid = atomic64_read(&current->elfbac_state->context.id);
+			asid = atomic64_read(&current->elfbac_task->state->context.id);
 			atomic64_set(&mm->context.id, asid);
 		}
 
 		if (is_stack) {
 			orig_pgd = mm->pgd;
-			src_pgd = mm->elfbac_policy->stacks[current->elfbac_state->stack_id];
+			src_pgd = mm->elfbac_policy->stacks[current->elfbac_task->state->stack_id];
 
 			mm->pgd = src_pgd;
 			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
@@ -337,7 +341,7 @@ good_area:
 			fault = handle_mm_fault(mm, vma, addr & PAGE_MASK, flags);
 		}
 
-		if (elfbac_copy_mapping(mm, current->elfbac_state->pgd, src_pgd,
+		if (elfbac_copy_mapping(mm, current->elfbac_task->state->pgd, src_pgd,
 					vma, addr, access_flags) != 0)
 			fault = VM_FAULT_BADACCESS;
 
@@ -468,6 +472,11 @@ retry:
 	 */
 	if (likely(!(fault & (VM_FAULT_ERROR | VM_FAULT_BADMAP | VM_FAULT_BADACCESS))))
 		return 0;
+
+#ifdef CONFIG_ELFBAC
+	if (fault & VM_FAULT_ELFBAC)
+		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, tsk, true);
+#endif
 
 	/*
 	 * If we are in kernel mode at this point, we

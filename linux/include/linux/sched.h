@@ -1290,7 +1290,7 @@ enum perf_event_task_context {
 };
 
 #ifdef CONFIG_ELFBAC
-struct elfbac_state;
+struct elfbac_task;
 #endif
 
 struct task_struct {
@@ -1729,7 +1729,7 @@ struct task_struct {
 	unsigned long	task_state_change;
 #endif
 #ifdef CONFIG_ELFBAC
-	struct elfbac_state *elfbac_state;
+	struct elfbac_task *elfbac_task;
 #endif
 };
 

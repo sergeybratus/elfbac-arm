@@ -963,6 +963,7 @@ ssh_packet_send1(struct ssh *ssh)
 	return r;
 }
 
+__attribute__((section(".text.crypto")))
 int
 ssh_set_newkeys(struct ssh *ssh, int mode)
 {
